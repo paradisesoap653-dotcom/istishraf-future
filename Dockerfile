@@ -1,6 +1,7 @@
 # ============================================================
 # استشراف المستقبل (Istishraf) - Production Cloud Dockerfile
-# Builds unified Arabic Vue 3 PWA + Python Gunicorn API Server
+# Compatible with Hugging Face Spaces (Free 16GB RAM), Render,
+# Railway, Koyeb, and Self-Hosted Docker
 # ============================================================
 
 # 1) Build Frontend SPA & PWA
@@ -18,12 +19,14 @@ RUN npm run build
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=5001
+    PORT=7860 \
+    HOME=/home/user
 
 # libgomp1 is required by PyTorch CPU runtime on Debian slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libgomp1 && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -m -u 1000 user
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
@@ -43,11 +46,15 @@ RUN uv pip install --system --no-cache \
 COPY backend ./backend
 COPY --from=frontend-builder /build/frontend/webroot ./frontend/webroot
 
-# Ensure persistent uploads directory exists
-RUN mkdir -p /app/backend/uploads
+# Ensure writable directories for non-root containers (e.g. Hugging Face Spaces uid=1000)
+RUN mkdir -p /app/backend/uploads /app/backend/logs /home/user/.cache && \
+    touch /app/.env && \
+    chown -R 1000:1000 /app /home/user && \
+    chmod -R 775 /app /home/user
 
-EXPOSE 5001
+USER user
+EXPOSE 7860
 
 # Single gthread process (-w 1 --threads 16) preserves in-memory TaskManager,
 # SimulationRunner, and live Config state across concurrent user requests.
-CMD ["sh", "-c", "gunicorn --chdir /app/backend -w 1 --threads 16 --timeout 300 -b 0.0.0.0:${PORT:-5001} 'app:create_app()'"]
+CMD ["sh", "-c", "gunicorn --chdir /app/backend -w 1 --threads 16 --timeout 300 -b 0.0.0.0:${PORT:-7860} 'app:create_app()'"]
