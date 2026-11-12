@@ -62,17 +62,28 @@ def login():
     })
 
 
+def _first_registration_becomes_admin() -> bool:
+    """هل سيصبح أول مسجّل مديرًا فعلًا؟
+
+    يصبح كذلك فقط إذا لم يكن ADMIN_EMAIL مضبوطًا؛ وإن كان مضبوطًا فالإدارة
+    محصورة بذلك البريد، وإخبار الزائر بالعكس مضلّل.
+    """
+    import os
+    if (os.environ.get('ADMIN_EMAIL') or '').strip():
+        return False
+    return UserStore.count_users() == 0
+
+
 @auth_bp.route('/me', methods=['GET'])
 def me():
     user = get_current_user()
-    has_any_users = UserStore.count_users() > 0
     if not user:
         return jsonify({
             'success': True,
             'data': {
                 'authenticated': False,
                 'user': None,
-                'first_user_becomes_admin': not has_any_users,
+                'first_user_becomes_admin': _first_registration_becomes_admin(),
             }
         })
 

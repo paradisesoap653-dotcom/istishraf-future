@@ -333,7 +333,9 @@ def generate_ontology():
         from flask import current_app
         from ..models.user import UserStore, get_current_user
         current_user = get_current_user()
-        if not current_app.testing and UserStore.count_users() > 0 and not current_user:
+        # الحراسة العامة في api/guards.py تفرض الهوية؛ هذا فحص احتياطي
+        # لا يعتمد على عدد المستخدمين في قاعدة البيانات.
+        if not current_app.testing and not current_user:
             return jsonify({
                 "success": False,
                 "error": "يرجى تسجيل الدخول أولاً لحفظ مشاريعك في حسابك الخاص"

@@ -28,6 +28,11 @@ class Config:
     # Flask配置
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
     DEBUG = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+
+    # في الاختبارات نسمح بالطلبات المجهولة افتراضيًا حتى لا تتعطل اختبارات
+    # الوحدة القديمة؛ اضبط ISTISHRAF_ENFORCE_AUTH_IN_TESTING=1 لاختبار
+    # الحراسة نفسها.
+    ENFORCE_AUTH_IN_TESTING = os.environ.get('ISTISHRAF_ENFORCE_AUTH_IN_TESTING', '').lower() in ('1', 'true', 'yes')
     
     # JSON配置 - 禁用ASCII转义，让中文直接显示
     JSON_AS_ASCII = False

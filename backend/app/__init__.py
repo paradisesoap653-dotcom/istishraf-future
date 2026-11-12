@@ -57,13 +57,23 @@ def create_app(config_class=Config):
     if should_log_startup:
         logger.info("已注册模拟进程清理函数")
     
-    # 请求日志中间件
+    # 请求日志中间件（لا تُسجّل الأسرار أبدًا)
+    _REDACTED_KEYS = ('key', 'password', 'token', 'secret', 'authorization')
+
+    def _redact(payload):
+        if not isinstance(payload, dict):
+            return payload
+        return {
+            k: ('***' if any(marker in k.lower() for marker in _REDACTED_KEYS) else v)
+            for k, v in payload.items()
+        }
+
     @app.before_request
     def log_request():
         logger = get_logger('mirofish.request')
         logger.debug(f"请求: {request.method} {request.path}")
         if request.content_type and 'json' in request.content_type:
-            logger.debug(f"请求体: {request.get_json(silent=True)}")
+            logger.debug(f"请求体: {_redact(request.get_json(silent=True))}")
     
     @app.after_request
     def log_response(response):
@@ -90,13 +100,19 @@ def create_app(config_class=Config):
     # 健康检查
     @app.route('/health')
     def health():
-        return {'status': 'ok', 'service': 'Istishraf Backend'}
+        return {
+            'status': 'ok',
+            'service': 'Istishraf Backend',
+            'storage': 'ephemeral' if Config.IS_SERVERLESS else 'local-disk',
+            'auth_enforced': True,
+        }
 
     @app.route('/api/config/status', methods=['GET'])
     def get_config_status():
         user = get_current_user()
-        has_users = UserStore.count_users() > 0
-        can_manage = (not has_users) or bool(user and user.get('role') == 'admin')
+        # لا يُمنح حق الإدارة لغياب المستخدمين: قاعدة البيانات المؤقتة على
+        # serverless تبدأ فارغة دائمًا، وكان ذلك يفتح الإدارة للزوار.
+        can_manage = bool(user and user.get('role') == 'admin')
         has_llm = bool(Config.LLM_API_KEY and Config.LLM_API_KEY.strip())
         has_zep = bool(Config.ZEP_API_KEY and Config.ZEP_API_KEY.strip())
         return {
@@ -114,10 +130,16 @@ def create_app(config_class=Config):
     @app.route('/api/config/update', methods=['POST'])
     def update_config_settings():
         user = get_current_user()
-        if UserStore.count_users() > 0 and (not user or user.get('role') != 'admin'):
+        if not user:
             return {
                 'success': False,
-                'error': 'فقط مدير النظام (أول حساب مسجّل) يملك صلاحية تعديل مفاتيح الخادم'
+                'code': 'auth_required',
+                'error': 'مطلوب تسجيل الدخول للوصول إلى هذه الخدمة',
+            }, 401
+        if user.get('role') != 'admin':
+            return {
+                'success': False,
+                'error': 'فقط مدير النظام يملك صلاحية تعديل مفاتيح الخادم'
             }, 403
         payload = request.get_json(silent=True) or {}
         llm_key = (payload.get('llm_api_key') or '').strip()
@@ -138,18 +160,21 @@ def create_app(config_class=Config):
             Config.ZEP_API_KEY = zep_key
             os.environ['ZEP_API_KEY'] = zep_key
 
-        env_path = '/tmp/.env' if Config.IS_SERVERLESS else os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env'))
-        lines = [
-            f"LLM_API_KEY={Config.LLM_API_KEY or ''}",
-            f"LLM_BASE_URL={Config.LLM_BASE_URL or 'https://api.openai.com/v1'}",
-            f"LLM_MODEL_NAME={Config.LLM_MODEL_NAME or 'gpt-4o-mini'}",
-            f"ZEP_API_KEY={Config.ZEP_API_KEY or ''}",
-        ]
-        try:
-            with open(env_path, 'w', encoding='utf-8') as env_file:
-                env_file.write('\n'.join(lines) + '\n')
-        except OSError as env_err:
-            logger.warning(f"Skipping .env write on read-only fs: {env_err}")
+        # على serverless لا نكتب المفاتيح على القرص: /tmp مؤقت ويقرأه أي
+        # كود آخر في النسخة، والتعديل لا يُشارك بين النسخ أصلًا.
+        if not Config.IS_SERVERLESS:
+            env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env'))
+            lines = [
+                f"LLM_API_KEY={Config.LLM_API_KEY or ''}",
+                f"LLM_BASE_URL={Config.LLM_BASE_URL or 'https://api.openai.com/v1'}",
+                f"LLM_MODEL_NAME={Config.LLM_MODEL_NAME or 'gpt-4o-mini'}",
+                f"ZEP_API_KEY={Config.ZEP_API_KEY or ''}",
+            ]
+            try:
+                with open(env_path, 'w', encoding='utf-8') as env_file:
+                    env_file.write('\n'.join(lines) + '\n')
+            except OSError as env_err:
+                logger.warning(f"Skipping .env write on read-only fs: {env_err}")
 
         has_llm = bool(Config.LLM_API_KEY and Config.LLM_API_KEY.strip())
         has_zep = bool(Config.ZEP_API_KEY and Config.ZEP_API_KEY.strip())
