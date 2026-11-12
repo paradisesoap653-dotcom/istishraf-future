@@ -1,12 +1,14 @@
 <template>
   <div class="home-container">
-    <!-- 顶部导航栏 -->
+    <!-- الشريط العلوي المؤطّر -->
     <nav class="navbar">
       <div class="nav-brand">
-        <span class="brand-beacon">◈</span> استشراف المستقبل
+        <span class="brand-beacon">◈</span>
+        <span>استشراف المستقبل</span>
       </div>
       <div class="nav-links">
         <AuthModal :dark="true" />
+        <ThemeToggle />
         <PwaInstallButton :dark="true" />
         <ApiSettingsModal :dark="true" />
         <LanguageSwitcher :dark="true" />
@@ -14,76 +16,85 @@
     </nav>
 
     <div class="main-content">
-      <!-- 上半部分：Hero 区域 -->
-      <section class="hero-section">
-        <div class="hero-left">
-          <div class="tag-row">
-            <span class="orange-tag">{{ $t('home.tagline') }}</span>
-            <span class="version-text">{{ $t('home.version') }}</span>
-          </div>
-          
-          <h1 class="main-title">
-            {{ $t('home.heroTitle1') }}<br>
-            <span class="gradient-text">{{ $t('home.heroTitle2') }}</span>
-          </h1>
-          
-          <div class="hero-desc">
-            <p>
-              <i18n-t keypath="home.heroDesc" tag="span">
-                <template #brand><span class="highlight-bold">{{ $t('home.heroDescBrand') }}</span></template>
-                <template #agentScale><span class="highlight-orange">{{ $t('home.heroDescAgentScale') }}</span></template>
-                <template #optimalSolution><span class="highlight-code">{{ $t('home.heroDescOptimalSolution') }}</span></template>
-              </i18n-t>
-            </p>
-            <p class="slogan-text">
-              {{ $t('home.slogan') }}<span class="blinking-cursor">_</span>
-            </p>
-          </div>
-           
-          <div class="decoration-square"></div>
+      <!-- الإطار الرئيسي العلوي: الشعار في الوسط وبحجم أكبر + النص المنسق داخل إطار -->
+      <section class="hero-frame-card">
+        <div class="tag-row">
+          <span class="orange-tag">{{ $t('home.tagline') }}</span>
+          <span class="version-pill">{{ $t('home.version') }}</span>
         </div>
-        
-        <div class="hero-right">
-          <!-- Logo 区域 -->
-          <div class="logo-container">
-            <img src="../assets/logo/istishraf_hero.png" alt="استشراف المستقبل" class="hero-logo" />
+
+        <!-- الشعار الرسمي مكبّر وفي المنتصف -->
+        <div class="logo-showcase">
+          <div class="logo-medallion">
+            <img
+              src="../assets/logo/istishraf_hero.png"
+              alt="شعار استشراف المستقبل"
+              class="hero-logo"
+            />
           </div>
-          
-          <button class="scroll-down-btn" @click="scrollToBottom">
-            ↓
+        </div>
+
+        <h1 class="main-title">
+          {{ $t('home.heroTitle1') }}
+          <span class="accent-title">{{ $t('home.heroTitle2') }}</span>
+        </h1>
+
+        <!-- صندوق الوصف المؤطّر والمنسق -->
+        <div class="hero-desc-frame">
+          <p class="hero-desc-text">
+            <i18n-t keypath="home.heroDesc" tag="span">
+              <template #brand><span class="highlight-bold">{{ $t('home.heroDescBrand') }}</span></template>
+              <template #agentScale><span class="highlight-orange">{{ $t('home.heroDescAgentScale') }}</span></template>
+              <template #optimalSolution><span class="highlight-code">{{ $t('home.heroDescOptimalSolution') }}</span></template>
+            </i18n-t>
+          </p>
+          <div class="slogan-frame">
+            <span class="slogan-text">{{ $t('home.slogan') }}</span>
+            <span class="blinking-cursor">_</span>
+          </div>
+        </div>
+
+        <div class="hero-footer-bar">
+          <button type="button" class="scroll-down-btn" @click="scrollToConsole">
+            <span>ابدأ الاستشراف الآن</span>
+            <span class="down-arrow">↓</span>
           </button>
         </div>
       </section>
 
-      <!-- 下半部分：双栏布局 -->
-      <section class="dashboard-section">
-        <!-- 左栏：状态与步骤 -->
+      <!-- القسم المزدوج المؤطّر: حالة النظام ومراحل العمل + منصة الرفع والتشغيل -->
+      <section ref="consoleSectionRef" class="dashboard-section">
+        <!-- اللوحة اليمنى: حالة النظام والمؤشرات ومراحل العمل (كل قسم داخل إطار مستقل) -->
         <div class="left-panel">
-          <div class="panel-header">
-            <span class="status-dot">■</span> {{ $t('home.systemStatus') }}
-          </div>
-          
-          <h2 class="section-title">{{ $t('home.systemReady') }}</h2>
-          <p class="section-desc">
-            {{ $t('home.systemReadyDesc') }}
-          </p>
-          
-          <!-- 数据指标卡片 -->
-          <div class="metrics-row">
-            <div class="metric-card">
-              <div class="metric-value">{{ $t('home.metricLowCost') }}</div>
-              <div class="metric-label">{{ $t('home.metricLowCostDesc') }}</div>
+          <!-- إطار حالة النظام والمؤشرات -->
+          <div class="framed-card status-card">
+            <div class="panel-header">
+              <span class="status-dot">●</span>
+              <span>{{ $t('home.systemStatus') }}</span>
             </div>
-            <div class="metric-card">
-              <div class="metric-value">{{ $t('home.metricHighAvail') }}</div>
-              <div class="metric-label">{{ $t('home.metricHighAvailDesc') }}</div>
+
+            <h2 class="section-title">{{ $t('home.systemReady') }}</h2>
+            <p class="section-desc">
+              {{ $t('home.systemReadyDesc') }}
+            </p>
+
+            <div class="metrics-row">
+              <div class="metric-card">
+                <div class="metric-value">{{ $t('home.metricLowCost') }}</div>
+                <div class="metric-label">{{ $t('home.metricLowCostDesc') }}</div>
+              </div>
+              <div class="metric-card">
+                <div class="metric-value">{{ $t('home.metricHighAvail') }}</div>
+                <div class="metric-label">{{ $t('home.metricHighAvailDesc') }}</div>
+              </div>
             </div>
           </div>
 
-          <!-- 项目模拟步骤介绍 (新增区域) -->
-          <div class="steps-container">
+          <!-- إطار تسلسل مراحل العمل (كل خطوة داخل إطار فرعي أنيق) -->
+          <div class="framed-card steps-container">
             <div class="steps-header">
-               <span class="diamond-icon">◇</span> {{ $t('home.workflowSequence') }}
+              <span class="diamond-icon">◈</span>
+              <span>{{ $t('home.workflowSequence') }}</span>
             </div>
             <div class="workflow-list">
               <div class="workflow-item">
@@ -125,17 +136,16 @@
           </div>
         </div>
 
-        <!-- 右栏：交互控制台 -->
+        <!-- اللوحة اليسرى: وحدة رفع الملفات وبدء المحاكاة داخل إطار محكم -->
         <div class="right-panel">
-          <div class="console-box">
-            <!-- 上传区域 -->
+          <div class="framed-card console-box">
             <div class="console-section">
               <div class="console-header">
                 <span class="console-label">{{ $t('home.realitySeed') }}</span>
                 <span class="console-meta">{{ $t('home.supportedFormats') }}</span>
               </div>
-              
-              <div 
+
+              <div
                 class="upload-zone"
                 :class="{ 'drag-over': isDragOver, 'has-files': files.length > 0 }"
                 @dragover.prevent="handleDragOver"
@@ -152,13 +162,13 @@
                   style="display: none"
                   :disabled="loading"
                 />
-                
+
                 <div v-if="files.length === 0" class="upload-placeholder">
                   <div class="upload-icon">↑</div>
                   <div class="upload-title">{{ $t('home.dragToUpload') }}</div>
                   <div class="upload-hint">{{ $t('home.orBrowse') }}</div>
                 </div>
-                
+
                 <div v-else class="file-list">
                   <div v-for="(file, index) in files" :key="index" class="file-item">
                     <span class="file-icon">📄</span>
@@ -169,12 +179,10 @@
               </div>
             </div>
 
-            <!-- 分割线 -->
             <div class="console-divider">
               <span>{{ $t('home.inputParams') }}</span>
             </div>
 
-            <!-- 输入区域 -->
             <div class="console-section">
               <div class="console-header">
                 <span class="console-label">{{ $t('home.simulationPrompt') }}</span>
@@ -184,14 +192,13 @@
                   v-model="formData.simulationRequirement"
                   class="code-input"
                   :placeholder="$t('home.promptPlaceholder')"
-                  rows="6"
+                  rows="5"
                   :disabled="loading"
                 ></textarea>
                 <div class="model-badge">{{ $t('home.engineBadge') }}</div>
               </div>
             </div>
 
-            <!-- 启动按钮 -->
             <div class="console-section btn-section">
               <button
                 type="button"
@@ -201,7 +208,7 @@
               >
                 📄 {{ $t('home.loadSampleBtn') }}
               </button>
-              <button 
+              <button
                 class="start-engine-btn"
                 @click="startSimulation"
                 :disabled="!canSubmit || loading"
@@ -215,8 +222,10 @@
         </div>
       </section>
 
-      <!-- 历史项目数据库 -->
-      <HistoryDatabase />
+      <!-- سجل المحاكاة السابقة داخل إطار منظم -->
+      <div class="framed-card history-frame-wrapper">
+        <HistoryDatabase />
+      </div>
     </div>
   </div>
 </template>
@@ -229,64 +238,53 @@ import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PwaInstallButton from '../components/PwaInstallButton.vue'
 import ApiSettingsModal from '../components/ApiSettingsModal.vue'
 import AuthModal from '../components/AuthModal.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import { authState, openAuthModal } from '../store/auth'
 
 const router = useRouter()
+const consoleSectionRef = ref(null)
 
-// 表单数据
 const formData = ref({
   simulationRequirement: ''
 })
 
-// 文件列表
 const files = ref([])
-
-// 状态
 const loading = ref(false)
-const error = ref('')
 const isDragOver = ref(false)
-
-// 文件输入引用
 const fileInput = ref(null)
 
-// 计算属性:是否可以提交
 const canSubmit = computed(() => {
   return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
 })
 
-// 触发文件选择
 const triggerFileInput = () => {
   if (!loading.value) {
     fileInput.value?.click()
   }
 }
 
-// 处理文件选择
 const handleFileSelect = (event) => {
   const selectedFiles = Array.from(event.target.files)
   addFiles(selectedFiles)
 }
 
-// 处理拖拽相关
-const handleDragOver = (e) => {
+const handleDragOver = () => {
   if (!loading.value) {
     isDragOver.value = true
   }
 }
 
-const handleDragLeave = (e) => {
+const handleDragLeave = () => {
   isDragOver.value = false
 }
 
 const handleDrop = (e) => {
   isDragOver.value = false
   if (loading.value) return
-  
   const droppedFiles = Array.from(e.dataTransfer.files)
   addFiles(droppedFiles)
 }
 
-// 添加文件
 const addFiles = (newFiles) => {
   const validFiles = newFiles.filter(file => {
     const ext = file.name.split('.').pop().toLowerCase()
@@ -295,12 +293,10 @@ const addFiles = (newFiles) => {
   files.value.push(...validFiles)
 }
 
-// 移除文件
 const removeFile = (index) => {
   files.value.splice(index, 1)
 }
 
-// 载入阿拉伯语示例文档与模拟需求
 const loadSampleScenario = () => {
   const sampleContent = `تقرير إطلاق مبادرة "المدن الذكية والطاقة النظيفة 2027"
 تدرس هيئة التطوير الحضري تطبيق نظام نقل كهربائي ذكي مع تعرفة مرنة لأوقات الذروة ودعم مالي للشركات الناشئة في مجال الطاقة الشمسية المنزلية، بمشاركة السكان وأصحاب المتاجر وشركات التوصيل والخبراء الاقتصاديين.`
@@ -310,15 +306,14 @@ const loadSampleScenario = () => {
     'توقّع ردود فعل السكان، وأصحاب الأعمال التجارية، وشركات التوصيل، والخبراء الاقتصاديين تجاه تطبيق التعرفة المرنة للنقل الذكي ودعم الطاقة الشمسية خلال أول أسبوعين من الإعلان، وما هي أبرز نقاط الاعتراض والحلول المقترحة.'
 }
 
-// 滚动到底部
-const scrollToBottom = () => {
-  window.scrollTo({
-    top: document.body.scrollHeight,
-    behavior: 'smooth'
-  })
+const scrollToConsole = () => {
+  if (consoleSectionRef.value) {
+    consoleSectionRef.value.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  } else {
+    window.scrollTo({ top: 650, behavior: 'smooth' })
+  }
 }
 
-// 开始模拟 - تطلب تسجيل الدخول أولاً في وضع التطبيق العام لحفظ المشروع في مساحة المستخدم الخاصة
 const launchSimulationRoute = () => {
   import('../store/pendingUpload.js').then(({ setPendingUpload }) => {
     setPendingUpload(files.value, formData.value.simulationRequirement)
@@ -342,189 +337,215 @@ const startSimulation = () => {
 </script>
 
 <style scoped>
-/* 全局变量与重置 */
-:root {
-  --black: #000000;
-  --white: #FFFFFF;
-  --orange: #FF4500;
-  --gray-light: #F5F5F5;
-  --gray-text: #666666;
-  --border: #E5E5E5;
-  /* 
-    使用 Space Grotesk 作为主要标题字体，JetBrains Mono 作为代码/标签字体
-    确保已在 index.html 引入这些 Google Fonts 
-  */
-  --font-mono: 'JetBrains Mono', monospace;
-  --font-sans: 'Space Grotesk', 'Noto Sans SC', system-ui, sans-serif;
-  --font-cn: 'Noto Sans SC', system-ui, sans-serif;
-}
-
 .home-container {
   min-height: 100vh;
-  background: var(--white);
-  font-family: var(--font-sans);
-  color: var(--black);
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  padding-bottom: 40px;
 }
 
-/* 顶部导航 */
+/* شريط التنقل العلوي المؤطّر */
 .navbar {
-  height: 60px;
-  background: var(--black);
-  color: var(--white);
+  min-height: 64px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-frame);
+  box-shadow: var(--card-shadow);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 40px;
+  padding: 10px 28px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 
 .nav-brand {
   font-weight: 800;
-  font-size: 1.2rem;
+  font-size: 1.3rem;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  color: var(--text-primary);
 }
 
 .brand-beacon {
-  color: #FF4500;
-  font-size: 1.25rem;
+  color: var(--accent-orange);
+  font-size: 1.35rem;
 }
 
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 16px;
-}
-
-.github-link {
-  color: var(--white);
-  text-decoration: none;
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  font-weight: 500;
-  display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
-  transition: opacity 0.2s;
 }
 
-.github-link:hover {
-  opacity: 0.8;
-}
-
-.arrow {
-  font-family: sans-serif;
-}
-
-/* 主要内容区 */
+/* الحاوية الرئيسية */
 .main-content {
-  max-width: 1400px;
+  max-width: 1260px;
   margin: 0 auto;
-  padding: 60px 40px;
-}
-
-/* Hero 区域 */
-.hero-section {
+  padding: 24px 20px;
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 80px;
-  position: relative;
+  flex-direction: column;
+  gap: 24px;
 }
 
-.hero-left {
-  flex: 1;
-  padding-right: 60px;
+/* البطاقات المؤطّرة الموحّدة */
+.framed-card,
+.hero-frame-card {
+  background-color: var(--bg-card);
+  border: 1.5px solid var(--border-frame);
+  border-radius: 14px;
+  box-shadow: var(--card-shadow);
+  padding: 28px;
+}
+
+/* بطاقة الواجهة الرئيسية (Hero) المتمركزة */
+.hero-frame-card {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  overflow: hidden;
+  border-top: 4px solid var(--accent-orange);
 }
 
 .tag-row {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 15px;
-  margin-bottom: 25px;
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 22px;
 }
 
 .orange-tag {
-  background: var(--orange);
-  color: var(--white);
-  padding: 4px 10px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  font-size: 0.75rem;
+  background: var(--accent-orange);
+  color: #FFFFFF;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 800;
+  font-size: 0.85rem;
 }
 
-.version-text {
-  color: #999;
-  font-weight: 500;
-  letter-spacing: 0.5px;
+.version-pill {
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-frame);
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+/* الشعار الكبير في المنتصف */
+.logo-showcase {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 6px auto 24px;
+}
+
+.logo-medallion {
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  padding: 12px;
+  background: #FFFFFF;
+  border: 2px solid var(--border-strong);
+  box-shadow: 0 10px 30px rgba(255, 69, 0, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.hero-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 .main-title {
-  font-size: 4.5rem;
-  line-height: 1.2;
-  font-weight: 500;
-  margin: 0 0 40px 0;
-  letter-spacing: -2px;
-  color: var(--black);
+  font-size: 2.8rem;
+  line-height: 1.35;
+  font-weight: 800;
+  margin: 0 auto 22px;
+  color: var(--text-primary);
+  max-width: 820px;
 }
 
-.gradient-text {
-  background: linear-gradient(90deg, #000000 0%, #444444 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+.accent-title {
+  color: var(--accent-orange);
   display: inline-block;
+  margin-inline-start: 8px;
 }
 
-.hero-desc {
-  font-size: 1.05rem;
-  line-height: 1.8;
-  color: var(--gray-text);
-  max-width: 640px;
-  margin-bottom: 50px;
-  font-weight: 400;
-  text-align: justify;
+/* إطار النص التوضيحي المنسق */
+.hero-desc-frame {
+  max-width: 780px;
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border-frame);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin: 0 auto 22px;
+  text-align: center;
 }
 
-.hero-desc p {
-  margin-bottom: 1.5rem;
+.hero-desc-text {
+  font-size: 1.06rem;
+  line-height: 1.95;
+  color: var(--text-secondary);
+  font-weight: 600;
+  margin-bottom: 16px;
 }
 
 .highlight-bold {
-  color: var(--black);
-  font-weight: 700;
+  color: var(--text-primary);
+  font-weight: 800;
 }
 
 .highlight-orange {
-  color: var(--orange);
-  font-weight: 700;
-  font-family: var(--font-mono);
+  color: var(--accent-orange);
+  font-weight: 800;
 }
 
 .highlight-code {
-  background: rgba(0, 0, 0, 0.05);
-  padding: 2px 6px;
-  border-radius: 2px;
-  font-family: var(--font-mono);
-  font-size: 0.9em;
-  color: var(--black);
-  font-weight: 600;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-frame);
+  padding: 2px 8px;
+  border-radius: 5px;
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.slogan-frame {
+  background: var(--bg-card);
+  border: 1px solid var(--border-frame);
+  border-inline-start: 4px solid var(--accent-orange);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
 }
 
 .slogan-text {
-  font-size: 1.2rem;
-  font-weight: 520;
-  color: var(--black);
-  letter-spacing: 1px;
-  border-left: 3px solid var(--orange);
-  padding-left: 15px;
-  margin-top: 20px;
+  font-size: 1.08rem;
+  font-weight: 800;
+  color: var(--text-primary);
 }
 
 .blinking-cursor {
-  color: var(--orange);
+  color: var(--accent-orange);
   animation: blink 1s step-end infinite;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 @keyframes blink {
@@ -532,160 +553,165 @@ const startSimulation = () => {
   50% { opacity: 0; }
 }
 
-.decoration-square {
-  width: 16px;
-  height: 16px;
-  background: var(--orange);
-}
-
-.hero-right {
-  flex: 0.8;
+.hero-footer-bar {
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-end;
-}
-
-.logo-container {
-  width: 100%;
-  display: flex;
-  justify-content: flex-end;
-  padding-right: 40px;
-}
-
-.hero-logo {
-  max-width: 500px; /* 调整logo大小 */
-  width: 100%;
+  justify-content: center;
 }
 
 .scroll-down-btn {
-  width: 40px;
-  height: 40px;
-  border: 1px solid var(--border);
-  background: transparent;
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 10px 20px;
+  border-radius: 8px;
+  border: 1.5px solid var(--accent-orange);
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  font-weight: 800;
+  font-size: 0.95rem;
   cursor: pointer;
-  color: var(--orange);
-  font-size: 1.2rem;
-  transition: all 0.2s;
+  transition: all 0.2s ease;
 }
 
 .scroll-down-btn:hover {
-  border-color: var(--orange);
+  background: var(--accent-orange);
+  color: #FFFFFF;
 }
 
-/* Dashboard 双栏布局 */
+.down-arrow {
+  color: var(--accent-orange);
+  font-weight: 800;
+}
+
+.scroll-down-btn:hover .down-arrow {
+  color: #FFFFFF;
+}
+
+/* القسم المزدوج */
 .dashboard-section {
-  display: flex;
-  gap: 60px;
-  border-top: 1px solid var(--border);
-  padding-top: 60px;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: 1fr 1.15fr;
+  gap: 24px;
+  align-items: stretch;
 }
 
-.dashboard-section .left-panel,
-.dashboard-section .right-panel {
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.right-panel {
   display: flex;
   flex-direction: column;
 }
 
-/* 左侧面板 */
-.left-panel {
-  flex: 0.8;
-}
-
-.panel-header {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  color: #999;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 20px;
-}
-
-.status-dot {
-  color: var(--orange);
-  font-size: 0.8rem;
-}
-
-.section-title {
-  font-size: 2rem;
-  font-weight: 520;
-  margin: 0 0 15px 0;
-}
-
-.section-desc {
-  color: var(--gray-text);
-  margin-bottom: 25px;
-  line-height: 1.6;
-}
-
-.metrics-row {
-  display: flex;
-  gap: 20px;
-  margin-bottom: 15px;
-}
-
-.metric-card {
-  border: 1px solid var(--border);
-  padding: 20px 30px;
-  min-width: 150px;
-}
-
-.metric-value {
-  font-family: var(--font-mono);
-  font-size: 1.8rem;
-  font-weight: 520;
-  margin-bottom: 5px;
-}
-
-.metric-label {
-  font-size: 0.85rem;
-  color: #999;
-}
-
-/* 项目模拟步骤介绍 */
-.steps-container {
-  border: 1px solid var(--border);
-  padding: 30px;
-  position: relative;
-}
-
+.panel-header,
 .steps-header {
-  font-family: var(--font-mono);
-  font-size: 0.8rem;
-  color: #999;
-  margin-bottom: 25px;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-frame);
+  padding: 5px 12px;
+  border-radius: 6px;
+  margin-bottom: 14px;
+}
+
+.status-dot,
+.diamond-icon {
+  color: #10B981;
+  font-size: 0.95rem;
 }
 
 .diamond-icon {
-  font-size: 1.2rem;
-  line-height: 1;
+  color: var(--accent-orange);
 }
 
+.section-title {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.section-desc {
+  color: var(--text-secondary);
+  line-height: 1.85;
+  font-size: 0.98rem;
+  font-weight: 600;
+  padding: 12px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-frame);
+  border-radius: 8px;
+  margin-bottom: 18px;
+}
+
+.metrics-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.metric-card {
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border-frame);
+  border-radius: 10px;
+  padding: 16px 14px;
+  text-align: center;
+}
+
+.metric-value {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.metric-label {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* خطوات العمل داخل إطارات أنيقة */
 .workflow-list {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 12px;
 }
 
 .workflow-item {
   display: flex;
   align-items: flex-start;
-  gap: 20px;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border-frame);
+  border-radius: 10px;
+  transition: border-color 0.2s ease;
+}
+
+.workflow-item:hover {
+  border-color: var(--accent-orange);
 }
 
 .step-num {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--black);
-  opacity: 0.3;
+  min-width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(255, 69, 0, 0.12);
+  border: 1px solid rgba(255, 69, 0, 0.35);
+  color: var(--accent-orange);
+  font-weight: 800;
+  font-size: 0.92rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
 .step-info {
@@ -693,62 +719,75 @@ const startSimulation = () => {
 }
 
 .step-title {
-  font-weight: 520;
-  font-size: 1rem;
+  font-weight: 800;
+  font-size: 1.04rem;
+  color: var(--text-primary);
   margin-bottom: 4px;
 }
 
 .step-desc {
-  font-size: 0.85rem;
-  color: var(--gray-text);
+  font-size: 0.9rem;
+  line-height: 1.7;
+  font-weight: 500;
+  color: var(--text-secondary);
 }
 
-/* 右侧交互控制台 */
-.right-panel {
-  flex: 1.2;
-}
-
+/* صندوق التحكم ورفع الملفات */
 .console-box {
-  border: 1px solid #CCC; /* 外部实线 */
-  padding: 8px; /* 内边距形成双重边框感 */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .console-section {
-  padding: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-frame);
+  border-radius: 10px;
+  padding: 18px;
 }
 
 .console-section.btn-section {
-  padding-top: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .console-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 15px;
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: #666;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--text-secondary);
+}
+
+.console-meta {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .upload-zone {
-  border: 1px dashed #CCC;
-  height: 200px;
-  overflow-y: auto;
+  border: 2px dashed var(--border-strong);
+  border-radius: 10px;
+  min-height: 175px;
+  padding: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all 0.3s;
-  background: #FAFAFA;
+  transition: all 0.25s ease;
+  background: var(--bg-card);
 }
 
-.upload-zone.has-files {
-  align-items: flex-start;
-}
-
-.upload-zone:hover {
-  background: #F0F0F0;
-  border-color: #999;
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--accent-orange);
 }
 
 .upload-placeholder {
@@ -756,63 +795,70 @@ const startSimulation = () => {
 }
 
 .upload-icon {
-  width: 40px;
-  height: 40px;
-  border: 1px solid #DDD;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border-frame);
+  background: var(--bg-subtle);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 0 auto 15px;
-  color: #999;
+  margin: 0 auto 12px;
+  color: var(--accent-orange);
+  font-weight: 800;
+  font-size: 1.2rem;
 }
 
 .upload-title {
-  font-weight: 500;
-  font-size: 0.9rem;
-  margin-bottom: 5px;
+  font-weight: 800;
+  font-size: 0.98rem;
+  color: var(--text-primary);
+  margin-bottom: 4px;
 }
 
 .upload-hint {
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  color: #999;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 .file-list {
   width: 100%;
-  padding: 15px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .file-item {
   display: flex;
   align-items: center;
-  background: var(--white);
-  padding: 8px 12px;
-  border: 1px solid #EEE;
-  font-family: var(--font-mono);
-  font-size: 0.85rem;
+  background: var(--bg-subtle);
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-frame);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
 }
 
 .file-name {
   flex: 1;
   margin: 0 10px;
+  word-break: break-all;
 }
 
 .remove-btn {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 1.2rem;
-  color: #999;
+  font-size: 1.25rem;
+  color: var(--text-muted);
 }
 
 .console-divider {
   display: flex;
   align-items: center;
-  margin: 10px 0;
+  gap: 10px;
 }
 
 .console-divider::before,
@@ -820,232 +866,161 @@ const startSimulation = () => {
   content: '';
   flex: 1;
   height: 1px;
-  background: #EEE;
+  background: var(--border-frame);
 }
 
 .console-divider span {
-  padding: 0 15px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: #BBB;
-  letter-spacing: 1px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--text-muted);
 }
 
 .input-wrapper {
   position: relative;
-  border: 1px solid #DDD;
-  background: #FAFAFA;
+  border: 1.5px solid var(--border-frame);
+  border-radius: 10px;
+  background: var(--bg-card);
+  overflow: hidden;
 }
 
 .code-input {
   width: 100%;
   border: none;
   background: transparent;
-  padding: 20px;
-  font-family: var(--font-mono);
-  font-size: 0.9rem;
-  line-height: 1.6;
+  padding: 16px 16px 34px;
+  font-size: 0.96rem;
+  font-weight: 600;
+  line-height: 1.75;
+  color: var(--text-primary);
   resize: vertical;
   outline: none;
-  min-height: 150px;
+  min-height: 140px;
 }
 
 .model-badge {
   position: absolute;
-  bottom: 10px;
-  right: 15px;
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  color: #AAA;
+  bottom: 8px;
+  left: 12px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  background: var(--bg-subtle);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.sample-load-btn {
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 10px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sample-load-btn:hover {
+  border-color: var(--accent-orange);
 }
 
 .start-engine-btn {
   width: 100%;
-  background: var(--black);
-  color: var(--white);
+  background: var(--accent-orange);
+  color: #FFFFFF;
   border: none;
-  padding: 20px;
-  font-family: var(--font-mono);
-  font-weight: 700;
+  border-radius: 10px;
+  padding: 18px 22px;
+  font-weight: 800;
   font-size: 1.1rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
-  transition: all 0.3s ease;
-  letter-spacing: 1px;
-  position: relative;
-  overflow: hidden;
-}
-
-/* 可点击状态（非禁用） */
-.start-engine-btn:not(:disabled) {
-  background: var(--black);
-  border: 1px solid var(--black);
-  animation: pulse-border 2s infinite;
+  transition: all 0.25s ease;
 }
 
 .start-engine-btn:hover:not(:disabled) {
-  background: var(--orange);
-  border-color: var(--orange);
-  transform: translateY(-2px);
-}
-
-.start-engine-btn:active:not(:disabled) {
-  transform: translateY(0);
+  filter: brightness(1.08);
+  transform: translateY(-1px);
 }
 
 .start-engine-btn:disabled {
-  background: #E5E5E5;
-  color: #999;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  border: 1.5px solid var(--border-frame);
   cursor: not-allowed;
-  transform: none;
-  border: 1px solid #E5E5E5;
 }
 
-/* 引导动画：微妙的边框脉冲 */
-@keyframes pulse-border {
-  0% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.2); }
-  70% { box-shadow: 0 0 0 6px rgba(0, 0, 0, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+.history-frame-wrapper {
+  padding: 18px;
 }
 
-/* 响应式适配 */
-@media (max-width: 1024px) {
+/* توافق كامل ومثالي مع شاشات الهواتف */
+@media (max-width: 960px) {
   .dashboard-section {
-    flex-direction: column;
-  }
-  
-  .hero-section {
-    flex-direction: column;
-  }
-  
-  .hero-left {
-    padding-right: 0;
-    margin-bottom: 40px;
-  }
-  
-  .hero-logo {
-    max-width: 200px;
-    margin-bottom: 20px;
+    grid-template-columns: 1fr;
   }
 }
 
-.sample-load-btn {
-  width: 100%;
-  margin-bottom: 10px;
-  padding: 10px 14px;
-  background: #F7F7F8;
-  color: #111111;
-  border: 1px dashed #999999;
-  font-size: 0.85rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-
-.sample-load-btn:hover {
-  background: #EFEFF2;
-  border-color: #FF4500;
-}
-
-@media (max-width: 768px) {
+@media (max-width: 640px) {
   .navbar {
-    height: auto;
-    min-height: 60px;
-    padding: 10px 16px;
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: center;
+    padding: 12px 14px;
     gap: 10px;
   }
 
   .nav-links {
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .github-link {
-    display: none;
+    justify-content: center;
+    width: 100%;
   }
 
   .main-content {
-    padding: 28px 16px;
+    padding: 14px 12px;
+    gap: 16px;
+  }
+
+  .framed-card,
+  .hero-frame-card {
+    padding: 18px 14px;
+    border-radius: 12px;
+  }
+
+  .logo-medallion {
+    width: 210px;
+    height: 210px;
+    padding: 10px;
   }
 
   .main-title {
-    font-size: 2.3rem !important;
-    line-height: 1.3;
-    margin-bottom: 20px;
+    font-size: 1.95rem;
+    line-height: 1.4;
+  }
+
+  .hero-desc-frame {
+    padding: 14px 12px;
+  }
+
+  .hero-desc-text {
+    font-size: 0.98rem;
+    line-height: 1.85;
   }
 
   .metrics-row {
-    flex-direction: column;
-    gap: 12px;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
   }
-}
-</style>
 
-<style>
-html[lang="ar"] .main-title {
-  font-size: 3.4rem;
-  line-height: 1.3;
-  font-weight: 700;
-}
+  .metric-card {
+    padding: 12px 8px;
+  }
 
-html[lang="ar"] .workflow-list .step-desc {
-  font-size: 0.82rem !important;
-  line-height: 1.6 !important;
-}
-/* English locale adjustments (unscoped to target html[lang]) */
-html[lang="en"] .main-title {
-  font-size: 3.5rem;
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: -1px;
-}
-
-html[lang="en"] .hero-desc {
-  text-align: left;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: 0;
-}
-
-html[lang="en"] .slogan-text {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  letter-spacing: 0;
-}
-
-html[lang="en"] .tag-row {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-html[lang="en"] .navbar .nav-links {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-/* Left pane: system status + workflow */
-html[lang="en"] .status-section {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-html[lang="en"] .status-section .status-ready {
-  font-size: 1.6rem;
-}
-
-html[lang="en"] .status-section .metric-value {
-  font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 1.4rem;
-}
-
-html[lang="en"] .workflow-list .step-title {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-}
-
-html[lang="en"] .workflow-list .step-desc {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
-  font-size: 0.72rem !important;
-  line-height: 1.4 !important;
-}
-
-html[lang="en"] .workflow-list {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  .metric-value {
+    font-size: 1.05rem;
+  }
 }
 </style>

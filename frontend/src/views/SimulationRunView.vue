@@ -22,6 +22,7 @@
 
       <div class="header-right">
         <AuthModal />
+        <ThemeToggle />
         <PwaInstallButton />
         <ApiSettingsModal />
         <LanguageSwitcher />
@@ -81,6 +82,7 @@ import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv,
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PwaInstallButton from '../components/PwaInstallButton.vue'
 import AuthModal from '../components/AuthModal.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import ApiSettingsModal from '../components/ApiSettingsModal.vue'
 import { useI18n } from 'vue-i18n'
 

@@ -22,6 +22,7 @@
 
       <div class="header-right">
         <AuthModal />
+        <ThemeToggle />
         <PwaInstallButton />
         <ApiSettingsModal />
         <LanguageSwitcher />
@@ -91,6 +92,7 @@ import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PwaInstallButton from '../components/PwaInstallButton.vue'
 import AuthModal from '../components/AuthModal.vue'
+import ThemeToggle from '../components/ThemeToggle.vue'
 import ApiSettingsModal from '../components/ApiSettingsModal.vue'
 
 const route = useRoute()

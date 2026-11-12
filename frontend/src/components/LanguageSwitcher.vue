@@ -73,29 +73,25 @@ onUnmounted(() => {
   font-family: inherit;
 }
 
-.switcher-trigger {
-  background: transparent;
-  color: #333;
-  border: 1px solid #CCC;
-  padding: 5px 12px;
+.switcher-trigger,
+.language-switcher.dark .switcher-trigger {
+  background: var(--bg-subtle, #F1F5F9);
+  color: var(--text-primary, #0F172A);
+  border: 1px solid var(--border-strong, #CBD5E1);
+  padding: 5px 11px;
   font-size: 0.82rem;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 6px;
-  border-radius: 4px;
+  border-radius: 6px;
   transition: border-color 0.2s, background 0.2s;
 }
 
-.language-switcher.dark .switcher-trigger {
-  color: #FFFFFF;
-  border-color: rgba(255, 255, 255, 0.35);
-}
-
+.switcher-trigger:hover,
 .language-switcher.dark .switcher-trigger:hover {
-  border-color: #FFFFFF;
-  background: rgba(255, 255, 255, 0.08);
+  border-color: #FF4500;
 }
 
 .switcher-trigger:hover {

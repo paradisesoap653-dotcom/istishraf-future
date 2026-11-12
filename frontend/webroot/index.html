@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" data-theme="light">
   <head>
     <script>
       (function () {
         var loc = localStorage.getItem('locale') || 'ar';
+        var thm = localStorage.getItem('istishraf_theme') || 'light';
         document.documentElement.lang = loc;
         document.documentElement.dir = loc === 'ar' ? 'rtl' : 'ltr';
+        document.documentElement.setAttribute('data-theme', thm);
       })();
     </script>
     <meta charset="UTF-8" />
@@ -21,10 +23,10 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Tajawal:wght@400;500;700;800&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Fustat:wght@400;500;600;700;800&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <title>استشراف المستقبل</title>
-    <script type="module" crossorigin src="/assets/index-CGI4MJuU.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-tDydlRu0.css">
+    <script type="module" crossorigin src="/assets/index-Bed-MFZp.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CNkS4pZV.css">
   </head>
   <body>
     <div id="app"></div>

@@ -180,29 +180,25 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.settings-trigger-btn {
+.settings-trigger-btn,
+.settings-trigger-btn.dark {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 12px;
-  border-radius: 4px;
+  padding: 5px 11px;
+  border-radius: 6px;
   font-size: 0.82rem;
-  font-weight: 500;
+  font-weight: 700;
   cursor: pointer;
-  border: 1px solid #CCC;
-  background: transparent;
-  color: #333;
+  border: 1px solid var(--border-strong, #CBD5E1);
+  background: var(--bg-subtle, #F1F5F9);
+  color: var(--text-primary, #0F172A);
   transition: border-color 0.2s, background 0.2s;
 }
 
-.settings-trigger-btn.dark {
-  color: #FFFFFF;
-  border-color: rgba(255, 255, 255, 0.35);
-}
-
+.settings-trigger-btn:hover,
 .settings-trigger-btn.dark:hover {
-  border-color: #FFFFFF;
-  background: rgba(255, 255, 255, 0.08);
+  border-color: #FF4500;
 }
 
 .status-led {
