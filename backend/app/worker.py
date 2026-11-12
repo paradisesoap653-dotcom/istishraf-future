@@ -87,12 +87,17 @@ HANDLERS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], None]] = {
 # دورة التنفيذ
 # --------------------------------------------------------------------------
 
-def _heartbeat_loop(job: Dict[str, Any], lease_seconds: int, done: threading.Event) -> None:
+def _heartbeat_loop(
+    job: Dict[str, Any],
+    lease_seconds: int,
+    done: threading.Event,
+    persistent: bool = True,
+) -> None:
     interval = max(5, lease_seconds // 3)
     while not done.wait(interval):
         try:
             # نبضة العامل أيضًا: تنفيذ مهمة طويلة يجب ألا يُظهر العامل ميتًا
-            job_queue.heartbeat_worker(job.get("worker_id") or "worker")
+            job_queue.heartbeat_worker(job.get("worker_id") or "worker", persistent=persistent)
         except Exception:  # pragma: no cover
             pass
         if not job_queue.heartbeat(job["id"], job["fencing_token"], lease_seconds):
@@ -104,13 +109,13 @@ def _heartbeat_loop(job: Dict[str, Any], lease_seconds: int, done: threading.Eve
             return
 
 
-def execute_job(job: Dict[str, Any], lease_seconds: int) -> str:
+def execute_job(job: Dict[str, Any], lease_seconds: int, persistent: bool = True) -> str:
     """نفّذ مهمة واحدة. يعيد الحالة النهائية للطابور."""
     handler = HANDLERS.get(job["kind"])
     task_id = job.get("task_id")
     done = threading.Event()
     beat = threading.Thread(
-        target=_heartbeat_loop, args=(job, lease_seconds, done), daemon=True
+        target=_heartbeat_loop, args=(job, lease_seconds, done, persistent), daemon=True
     )
     beat.start()
 
@@ -149,6 +154,8 @@ def run_forever(
     max_seconds: Optional[float] = None,
     drain: bool = False,
     app=None,
+    persistent: bool = True,
+    worker_id: Optional[str] = None,
 ) -> None:
     """حلقة العمل.
 
@@ -161,7 +168,8 @@ def run_forever(
 
     if app is None:
         app = create_app()
-    worker_id = f"{socket.gethostname()}-{threading.current_thread().name}"
+    if not worker_id:
+        worker_id = f"{socket.gethostname()}-{threading.current_thread().name}"
     started_at = time.monotonic()
     processed = 0
 
@@ -174,13 +182,13 @@ def run_forever(
             return
         logger.info("العامل %s بدأ العمل (kinds=%s)", worker_id, kinds or "all")
 
-        job_queue.heartbeat_worker(worker_id, kinds)
+        job_queue.heartbeat_worker(worker_id, kinds, persistent=persistent)
         last_beat = time.monotonic()
         last_reclaim = 0.0
         while not _stop_event.is_set():
             if time.monotonic() - last_beat > 30:
                 try:
-                    job_queue.heartbeat_worker(worker_id, kinds)
+                    job_queue.heartbeat_worker(worker_id, kinds, persistent=persistent)
                 except Exception as exc:  # pragma: no cover
                     logger.error("تعذر إرسال نبضة العامل: %s", exc)
                 last_beat = time.monotonic()
@@ -205,7 +213,7 @@ def run_forever(
                 _stop_event.wait(poll_seconds)
                 continue
 
-            execute_job(job, lease_seconds)
+            execute_job(job, lease_seconds, persistent=persistent)
             processed += 1
             if once:
                 break

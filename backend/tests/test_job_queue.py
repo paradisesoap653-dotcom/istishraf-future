@@ -264,6 +264,23 @@ def test_should_queue_requires_live_worker():
     assert job_queue.should_queue() is False
 
 
+def test_tick_worker_does_not_enable_queue_routing():
+    """العامل الموقوت ينفّذ دفعة ويختفي: وجوده لا يجوز أن يحوّل طلبات المستخدمين
+    إلى طابور لن يخدمه أحد بعد ثوانٍ."""
+    job_queue.enqueue("graph_build", {"task_id": "t1"}, task_id="t1")
+    job_queue.heartbeat_worker("tick-host-abc123", ["graph_build"], persistent=False)
+
+    assert job_queue.workers_alive() == 1          # العامل الموقوت "حيّ" الآن
+    assert job_queue.workers_alive(persistent_only=True) == 0
+    assert job_queue.should_queue() is False       # لكن التوجيه يبقى مطفأً
+    assert job_queue.stats()["queued_mode"] is False
+
+    job_queue.heartbeat_worker("render-worker-1", ["graph_build"], persistent=True)
+    assert job_queue.workers_alive(persistent_only=True) == 1
+    assert job_queue.should_queue() is True
+    assert job_queue.stats()["persistent_workers"] == 1
+
+
 def test_queue_only_override(monkeypatch):
     monkeypatch.setenv("ISTISHRAF_QUEUE_ONLY", "1")
     assert job_queue.should_queue() is True

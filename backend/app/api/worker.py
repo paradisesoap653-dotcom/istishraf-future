@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import hmac
+import socket
 import threading
+import uuid
 
 from flask import current_app, jsonify, request
 
@@ -85,6 +87,9 @@ def worker_tick():
             drain=True,
             max_seconds=budget,
             poll_seconds=0.5,
+            # عامل موقوت: نبضته لا تُحوّل طلبات المستخدمين إلى الطابور
+            persistent=False,
+            worker_id=f"tick-{socket.gethostname()}-{uuid.uuid4().hex[:6]}",
         )
     except Exception as exc:  # noqa: BLE001
         logger.error("فشل تشغيل العامل عند الطلب: %s", exc)

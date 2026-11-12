@@ -61,9 +61,12 @@ _SCHEMA = (
     CREATE TABLE IF NOT EXISTS worker_heartbeats (
         worker_id TEXT PRIMARY KEY,
         kinds TEXT,
+        persistent BOOLEAN NOT NULL DEFAULT TRUE,
         last_seen TIMESTAMPTZ NOT NULL DEFAULT now()
     )
     """,
+    # ترقية آمنة لقواعد أُنشئت قبل إضافة العمود
+    "ALTER TABLE worker_heartbeats ADD COLUMN IF NOT EXISTS persistent BOOLEAN NOT NULL DEFAULT TRUE",
 )
 
 _schema_ready = False
@@ -375,23 +378,37 @@ def find_by_task(task_id: str) -> Optional[Dict[str, Any]]:
 WORKER_LIVENESS_SECONDS = 120
 
 
-def heartbeat_worker(worker_id: str, kinds: Optional[Sequence[str]] = None) -> None:
-    """سجّل حياة العامل. يُستدعى كل دورة استعلام حتى تعرف الواجهة أن عاملاً يعمل."""
+def heartbeat_worker(
+    worker_id: str,
+    kinds: Optional[Sequence[str]] = None,
+    persistent: bool = True,
+) -> None:
+    """سجّل حياة العامل.
+
+    ``persistent=False`` للعمال الموقوتين (مسار /api/worker/tick أو cron): هؤلاء
+    ينفّذون دفعة محدودة ثم يختفون، فلا يجوز أن يقود وجودهم إلى تحويل طلبات
+    المستخدمين إلى طابور لن يخدمه أحد بعد ثوانٍ.
+    """
     with _conn() as conn:
         ensure_schema(conn)
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO worker_heartbeats (worker_id, kinds, last_seen)
-                VALUES (%s, %s, now())
+                INSERT INTO worker_heartbeats (worker_id, kinds, persistent, last_seen)
+                VALUES (%s, %s, %s, now())
                 ON CONFLICT (worker_id) DO UPDATE
-                   SET kinds = EXCLUDED.kinds, last_seen = now()
+                   SET kinds = EXCLUDED.kinds,
+                       persistent = EXCLUDED.persistent,
+                       last_seen = now()
                 """,
-                (worker_id, ",".join(kinds) if kinds else None),
+                (worker_id, ",".join(kinds) if kinds else None, bool(persistent)),
             )
 
 
-def workers_alive(window_seconds: int = WORKER_LIVENESS_SECONDS) -> int:
+def workers_alive(
+    window_seconds: int = WORKER_LIVENESS_SECONDS,
+    persistent_only: bool = False,
+) -> int:
     """عدد العمال الذين أرسلوا نبضة خلال النافذة الأخيرة."""
     if not is_enabled():
         return 0
@@ -400,8 +417,12 @@ def workers_alive(window_seconds: int = WORKER_LIVENESS_SECONDS) -> int:
             ensure_schema(conn)
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT COUNT(*) FROM worker_heartbeats WHERE last_seen > now() - make_interval(secs => %s)",
-                    (window_seconds,),
+                    """
+                    SELECT COUNT(*) FROM worker_heartbeats
+                     WHERE last_seen > now() - make_interval(secs => %s)
+                       AND (%s = FALSE OR persistent)
+                    """,
+                    (window_seconds, persistent_only),
                 )
                 return int(cur.fetchone()[0])
     except Exception as exc:  # pragma: no cover
@@ -412,9 +433,9 @@ def workers_alive(window_seconds: int = WORKER_LIVENESS_SECONDS) -> int:
 def should_queue() -> bool:
     """هل نوجّه المهام الطويلة إلى الطابور؟
 
-    نفعل ذلك فقط عند وجود قاعدة دائمة **وعامل حيّ**، حتى لا تبقى المهام
-    معلّقة في الطابور إذا لم يُنشر العامل بعد. ``ISTISHRAF_QUEUE_ONLY=1``
-    يفرض التوجيه للطابور (للاختبار).
+    نفعل ذلك فقط عند وجود قاعدة دائمة **وعامل دائم حيّ** (لا مجرد عامل موقوت
+    نفّذ دفعة واختفى)، حتى لا تبقى المهام معلّقة في طابور لا يخدمه أحد.
+    ``ISTISHRAF_QUEUE_ONLY=1`` يفرض التوجيه (نمط cron بحت، على مسؤولية المُشغّل).
     """
     if not is_enabled():
         return False
@@ -422,7 +443,7 @@ def should_queue() -> bool:
 
     if (os.environ.get("ISTISHRAF_QUEUE_ONLY") or "").lower() in ("1", "true", "yes"):
         return True
-    return workers_alive() > 0
+    return workers_alive(persistent_only=True) > 0
 
 
 def stats() -> Dict[str, Any]:
@@ -456,17 +477,19 @@ def stats() -> Dict[str, Any]:
                 workers = int(cur.fetchone()[0])
         counts = {row[0]: int(row[1]) for row in rows}
         live = workers_alive()
+        persistent_live = workers_alive(persistent_only=True)
         return {
             "enabled": True,
             "workers_alive": live,
-            "queued_mode": live > 0,
+            "persistent_workers": persistent_live,
+            "queued_mode": should_queue(),
             "pending": counts.get("pending", 0),
             "running": counts.get("running", 0),
             "succeeded": counts.get("succeeded", 0),
             "failed": counts.get("failed", 0),
             "stale_pending": stale,
             "active_workers": workers,
-            "worker_healthy": live > 0 or counts.get("pending", 0) == 0,
+            "worker_healthy": persistent_live > 0 or counts.get("pending", 0) == 0,
         }
     except Exception as exc:
         logger.error(f"تعذر قراءة حالة الطابور: {exc}")

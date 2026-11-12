@@ -244,6 +244,8 @@ def test_worker_tick_drains_a_job_with_the_shared_secret(monkeypatch):
     )
     assert response.status_code == 200, response.get_json()
     assert response.get_json()["data"]["queue"]["pending"] == 0
+    # عامل موقوت: لا يُفعّل التوجيه للطابور
+    assert response.get_json()["data"]["queue"]["queued_mode"] is False
     assert job_queue.get(job_id)["status"] == "succeeded"
     assert done == [{"task_id": "tick-1"}]
 
