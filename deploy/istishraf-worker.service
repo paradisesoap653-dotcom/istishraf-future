@@ -1,0 +1,29 @@
+# وحدة systemd لتشغيل العامل على VPS.
+#   sudo cp deploy/istishraf-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now istishraf-worker
+[Unit]
+Description=Istishraf queue worker (استشراف — عامل المهام الطويلة)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10
+WorkingDirectory=/opt/istishraf/backend
+EnvironmentFile=/etc/istishraf-worker.env
+ExecStart=/opt/istishraf/.venv/bin/python -m app.worker
+# إيقاف رشيق: تُكمل المهمة الحالية ثم تخرج
+KillSignal=SIGTERM
+TimeoutStopSec=1600
+
+# صلاحيات محدودة
+User=istishraf
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/istishraf/backend/uploads /opt/istishraf/backend/logs
+
+[Install]
+WantedBy=multi-user.target

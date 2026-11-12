@@ -1,0 +1,22 @@
+# تطبيق Fly.io مخصص للعامل المستقل (بلا منفذ HTTP).
+#   fly launch --no-deploy --copy-config --name istishraf-worker -c fly.worker.toml
+#   fly secrets set DATABASE_URL=… LLM_API_KEY=… LLM_BASE_URL=… LLM_MODEL_NAME=… -c fly.worker.toml
+#   fly deploy -c fly.worker.toml
+app = "istishraf-worker"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile.worker"
+
+[processes]
+  worker = "python -m app.worker"
+
+# العامل لا يفتح منفذًا: لا [http_service] ولا [services]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[env]
+  ISTISHRAF_JOB_LEASE_SECONDS = "900"
+  ISTISHRAF_JOB_POLL_SECONDS = "3"
