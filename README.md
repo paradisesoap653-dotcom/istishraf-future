@@ -1,4 +1,5 @@
 ---
+
 title: استشراف المستقبل - Istishraf
 emoji: 🔮
 colorFrom: gray
