@@ -48,6 +48,12 @@ class Config:
     # التخزين الدائم (Neon PostgreSQL). عند غيابه يعمل التطبيق بملفات محلية
     # فقط، وهو ما يعني فقدان البيانات على serverless.
     DATABASE_URL = (os.environ.get('DATABASE_URL') or '').strip()
+
+    # المهام الطويلة: تُنفّذ في عامل مستقل عبر الطابور الدائم افتراضيًا.
+    # ISTISHRAF_INLINE_TASKS=1 يعيد السلوك القديم (تنفيذ داخل الطلب).
+    INLINE_LONG_TASKS = os.environ.get('ISTISHRAF_INLINE_TASKS', '').lower() in ('1', 'true', 'yes')
+    JOB_LEASE_SECONDS = int(os.environ.get('ISTISHRAF_JOB_LEASE_SECONDS', '600'))
+    JOB_POLL_SECONDS = float(os.environ.get('ISTISHRAF_JOB_POLL_SECONDS', '3'))
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

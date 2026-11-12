@@ -6,6 +6,7 @@ Report API路由
 import os
 import traceback
 import threading
+from functools import partial
 from flask import request, jsonify, send_file
 
 from . import report_bp
@@ -243,76 +244,76 @@ def generate_report():
             current_locale = get_locale()
             register_graph_reader(graph_id, report_id)
 
-            def run_generate():
-                set_locale(current_locale)
+            from ..models import job_queue
+
+            queued = False
+            if job_queue.should_queue() and not Config.INLINE_LONG_TASKS:
+                from ..models.user import get_current_user
+
                 try:
+                    current_user = get_current_user()
+                except Exception:
+                    current_user = None
+                job_id = job_queue.enqueue(
+                    "report_generate",
+                    {
+                        "task_id": task_id,
+                        "graph_id": graph_id,
+                        "simulation_id": simulation_id,
+                        "simulation_requirement": simulation_requirement,
+                        "report_id": report_id,
+                        "locale": current_locale,
+                    },
+                    task_id=task_id,
+                    owner_user_id=(current_user or {}).get("id"),
+                    dedupe_key=f"report_generate:{simulation_id}",
+                )
+                active_job = job_queue.get(job_id) if job_id else None
+                if active_job and active_job.get("task_id") not in (None, task_id):
                     task_manager.update_task(
                         task_id,
-                        status=TaskStatus.PROCESSING,
-                        progress=0,
-                        message=t('api.initReportAgent')
+                        status=TaskStatus.FAILED,
+                        message="يوجد توليد تقرير نشط لهذه المحاكاة بالفعل",
+                        error="duplicate_active_report",
                     )
-
-                    agent = ReportAgent(
-                        graph_id=graph_id,
-                        simulation_id=simulation_id,
-                        simulation_requirement=simulation_requirement
-                    )
-
-                    def progress_callback(stage, progress, message):
-                        task_manager.update_task(
-                            task_id,
-                            progress=progress,
-                            message=f"[{stage}] {message}"
-                        )
-
-                    report = agent.generate_report(
-                        progress_callback=progress_callback,
-                        report_id=report_id
-                    )
-                    ReportManager.save_report(report)
-
-                    if report.status == ReportStatus.COMPLETED:
-                        task_manager.complete_task(
-                            task_id,
-                            result={
-                                "report_id": report.report_id,
-                                "simulation_id": simulation_id,
-                                "status": "completed"
-                            }
+                    unregister_graph_reader(graph_id, report_id)
+                else:
+                    queued = True
+            else:
+                try:
+                    if Config.IS_SERVERLESS:
+                        run_report_generate_task(
+                            task_id, graph_id, simulation_id,
+                            simulation_requirement, report_id, current_locale,
                         )
                     else:
-                        task_manager.fail_task(
-                            task_id,
-                            report.error or t('api.reportGenerateFailed')
+                        thread = threading.Thread(
+                            target=partial(
+                                run_report_generate_task,
+                                task_id, graph_id, simulation_id,
+                                simulation_requirement, report_id, current_locale,
+                            ),
+                            daemon=True,
                         )
-                except Exception as e:
-                    logger.error(f"报告生成失败: {str(e)}")
-                    task_manager.fail_task(task_id, str(e))
-                finally:
+                        thread.start()
+                except Exception:
                     unregister_graph_reader(graph_id, report_id)
-
-            try:
-                if Config.IS_SERVERLESS:
-                    run_generate()
-                else:
-                    thread = threading.Thread(target=run_generate, daemon=True)
-                    thread.start()
-            except Exception:
-                unregister_graph_reader(graph_id, report_id)
-                raise
+                    raise
         
-        return jsonify({
+        payload = {
             "success": True,
             "data": {
                 "simulation_id": simulation_id,
                 "report_id": report_id,
                 "task_id": task_id,
                 "status": "generating",
+                "queued": queued,
                 "message": t('api.reportGenerateStarted'),
                 "already_generated": False
             }
-        })
+        }
+        # 202: التوليد في الطابور الدائم وينفّذه عامل مستقل
+        return (jsonify(payload), 202) if queued else jsonify(payload)
         
     except Exception as e:
         logger.error(f"启动报告生成任务失败: {str(e)}")
@@ -1139,3 +1140,73 @@ def get_graph_statistics_tool():
             "error": str(e),
             "traceback": traceback.format_exc()
         }), 500
+
+
+class ReportLeaseLost(RuntimeError):
+    """فُقد تأجير مهمة التقرير؛ لا تُنشر النتيجة."""
+
+
+def run_report_generate_task(
+    task_id: str,
+    graph_id: str,
+    simulation_id: str,
+    simulation_requirement: str,
+    report_id: str,
+    locale_code=None,
+    guard=None,
+) -> None:
+    """توليد التقرير — يُستدعى من خيط محلي أو من العامل المستقل."""
+    task_manager = TaskManager()
+    if locale_code:
+        set_locale(locale_code)
+    try:
+        task_manager.update_task(
+            task_id,
+            status=TaskStatus.PROCESSING,
+            progress=0,
+            message=t('api.initReportAgent')
+        )
+
+        agent = ReportAgent(
+            graph_id=graph_id,
+            simulation_id=simulation_id,
+            simulation_requirement=simulation_requirement
+        )
+
+        def progress_callback(stage, progress, message):
+            # لا تنشر تقدّمًا بعد فقدان التأجير: عامل أحدث قد يكون مالك المهمة
+            if guard is not None and not guard():
+                raise ReportLeaseLost("فُقد حق تنفيذ المهمة قبل النشر")
+            task_manager.update_task(
+                task_id,
+                progress=progress,
+                message=f"[{stage}] {message}"
+            )
+
+        report = agent.generate_report(
+            progress_callback=progress_callback,
+            report_id=report_id
+        )
+        if guard is not None and not guard():
+            raise ReportLeaseLost("فُقد حق تنفيذ المهمة قبل حفظ التقرير")
+        ReportManager.save_report(report)
+
+        if report.status == ReportStatus.COMPLETED:
+            task_manager.complete_task(
+                task_id,
+                result={
+                    "report_id": report.report_id,
+                    "simulation_id": simulation_id,
+                    "status": "completed"
+                }
+            )
+        else:
+            task_manager.fail_task(
+                task_id,
+                report.error or t('api.reportGenerateFailed')
+            )
+    except Exception as e:
+        logger.error(f"报告生成失败: {str(e)}")
+        task_manager.fail_task(task_id, str(e))
+    finally:
+        unregister_graph_reader(graph_id, report_id)

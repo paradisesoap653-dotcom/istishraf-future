@@ -10,5 +10,19 @@ services:
     volumes:
       - istishraf_data:/app/backend/uploads
 
+  # العامل المستقل: يسحب المهام الطويلة من طابور Neon وينفّذها خارج دورة الطلب
+  istishraf-worker:
+    build: .
+    container_name: istishraf-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    working_dir: /app/backend
+    env_file:
+      - .env
+    volumes:
+      - istishraf_data:/app/backend/uploads
+    depends_on:
+      - istishraf
+
 volumes:
   istishraf_data:

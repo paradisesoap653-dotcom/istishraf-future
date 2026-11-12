@@ -120,10 +120,20 @@ def create_app(config_class=Config):
             'durable': durable,
             'auth_enforced': True,
         }
+        # حالة الطابور (بلا أسرار): عدد المهام وحالة العامل المستقل
+        try:
+            from .models import job_queue
+
+            payload['queue'] = job_queue.stats()
+        except Exception:  # pragma: no cover - لا يجب أن يُسقط /health
+            payload['queue'] = {'enabled': False}
         # فحص عميق اختياري: /health?deep=1 يحاول اتصالًا حقيقيًا بقاعدة البيانات
         if request.args.get('deep') in ('1', 'true', 'yes'):
             payload['database'] = 'ok' if storage.check_connection() else 'unavailable'
             if payload['database'] != 'ok':
+                payload['status'] = 'degraded'
+            queue = payload.get('queue') or {}
+            if queue.get('enabled') and queue.get('worker_healthy') is False:
                 payload['status'] = 'degraded'
         return payload
 
