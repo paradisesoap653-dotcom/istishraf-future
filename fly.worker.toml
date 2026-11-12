@@ -20,3 +20,8 @@ primary_region = "fra"
 [env]
   ISTISHRAF_JOB_LEASE_SECONDS = "900"
   ISTISHRAF_JOB_POLL_SECONDS = "3"
+
+# العامل يجب أن يعمل دائمًا: لو خرج لأي سبب (مثل غياب سرّ) تُعاد تشغيله تلقائيًا
+[[restart]]
+  policy = "always"
+  retries = 10
