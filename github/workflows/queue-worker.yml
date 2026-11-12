@@ -1,0 +1,59 @@
+# عامل المهام الطويلة على GitHub Actions — بديل مجاني لمستضيف دائم.
+#
+# كل تشغيل يسحب المهام الجاهزة من طابور Neon حتى تفرغ أو ينتهي السقف الزمني،
+# ثم يخرج. لا يحتاج أي خادم إضافي، لكن زمن بدء المهمة يصل إلى ~5 دقائق
+# (أقل مدة يدعمها جدول Actions).
+#
+# الأسرار المطلوبة في المستودع (Settings → Secrets and variables → Actions):
+#   DATABASE_URL      اتصال Neon (نفس قيمة تطبيق Vercel)
+#   LLM_API_KEY       مفتاح مزوّد النموذج
+#   LLM_BASE_URL      عنوان المزود المتوافق مع OpenAI
+#   LLM_MODEL_NAME    اسم النموذج
+#   ZEP_API_KEY       (اختياري) عند استخدام Zep Cloud
+
+name: queue-worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_seconds:
+        description: "سقف زمني بالثواني"
+        default: "280"
+
+concurrency:
+  group: queue-worker
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: تثبيت الاعتماديات
+        run: |
+          python -m pip install --upgrade pip
+          # قائمة اعتماديات العامل فقط (بلا PyTorch/camel) — أسرع بكثير
+          pip install -r backend/requirements-worker.txt
+
+      - name: سحب المهام وتنفيذها
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL_NAME: ${{ secrets.LLM_MODEL_NAME }}
+          ZEP_API_KEY: ${{ secrets.ZEP_API_KEY }}
+          ISTISHRAF_UPLOAD_DIR: ${{ runner.temp }}/uploads
+          PYTHONPATH: .
+        run: |
+          BUDGET="${{ github.event.inputs.max_seconds || '280' }}"
+          python -m app.worker --drain --max-seconds "$BUDGET"
