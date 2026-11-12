@@ -92,6 +92,16 @@ def create_app(config_class=Config):
     except Exception as seed_err:
         logger.warning(f"Demo seed skipped: {seed_err}")
 
+    from .models import storage
+    if Config.IS_SERVERLESS and not storage.is_durable():
+        logger.error(
+            "DATABASE_URL غير مضبوط على serverless: كل بيانات المستخدمين "
+            "(الحسابات، المشاريع، الملفات، المحاكاة، التقارير) ستُفقد عند "
+            "إعادة التشغيل. اضبط DATABASE_URL على Neon."
+        )
+    else:
+        logger.info(f"التخزين الدائم: {'Postgres/Neon' if storage.is_durable() else 'محلي'}")
+
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(graph_bp, url_prefix='/api/graph')
     app.register_blueprint(simulation_bp, url_prefix='/api/simulation')
@@ -100,12 +110,22 @@ def create_app(config_class=Config):
     # 健康检查
     @app.route('/health')
     def health():
-        return {
+        from .models import storage
+
+        durable = storage.is_durable()
+        payload = {
             'status': 'ok',
             'service': 'Istishraf Backend',
-            'storage': 'ephemeral' if Config.IS_SERVERLESS else 'local-disk',
+            'storage': 'postgres' if durable else ('ephemeral' if Config.IS_SERVERLESS else 'local-disk'),
+            'durable': durable,
             'auth_enforced': True,
         }
+        # فحص عميق اختياري: /health?deep=1 يحاول اتصالًا حقيقيًا بقاعدة البيانات
+        if request.args.get('deep') in ('1', 'true', 'yes'):
+            payload['database'] = 'ok' if storage.check_connection() else 'unavailable'
+            if payload['database'] != 'ok':
+                payload['status'] = 'degraded'
+        return payload
 
     @app.route('/api/config/status', methods=['GET'])
     def get_config_status():

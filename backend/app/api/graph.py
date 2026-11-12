@@ -89,10 +89,11 @@ def _delete_cloud_graph_if_present(graph_id: str | None) -> None:
                 f"{', '.join(active_simulations)}"
             )
         if not Config.ZEP_API_KEY or graph_id.startswith("graph_local_") or graph_id.startswith("graph_demo_"):
+            from ..models import storage
             from ..services.local_graph_builder import local_graph_path
             lpath = local_graph_path(graph_id)
-            if os.path.exists(lpath) and not graph_id.startswith("graph_demo_"):
-                os.remove(lpath)
+            if storage.exists(lpath) and not graph_id.startswith("graph_demo_"):
+                storage.remove(lpath)
             return
         try:
             GraphBuilderService(api_key=Config.ZEP_API_KEY).delete_graph(graph_id)

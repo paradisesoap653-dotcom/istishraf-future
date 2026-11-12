@@ -44,6 +44,10 @@ class Config:
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
+
+    # التخزين الدائم (Neon PostgreSQL). عند غيابه يعمل التطبيق بملفات محلية
+    # فقط، وهو ما يعني فقدان البيانات على serverless.
+    DATABASE_URL = (os.environ.get('DATABASE_URL') or '').strip()
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB

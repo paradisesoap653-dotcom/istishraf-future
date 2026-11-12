@@ -6,13 +6,13 @@ OASIS模拟管理器
 
 import os
 import json
-import shutil
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 
 from ..config import Config
+from ..models import storage
 from ..utils.logger import get_logger
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
 from .oasis_profile_generator import OasisProfileGenerator, OasisAgentProfile
@@ -141,7 +141,7 @@ class SimulationManager:
     
     def __init__(self):
         # 确保目录存在
-        os.makedirs(self.SIMULATION_DATA_DIR, exist_ok=True)
+        storage.makedirs(self.SIMULATION_DATA_DIR)
         
         # 内存中的模拟状态缓存
         self._simulations: Dict[str, SimulationState] = {}
@@ -149,7 +149,7 @@ class SimulationManager:
     def _get_simulation_dir(self, simulation_id: str) -> str:
         """获取模拟数据目录"""
         sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
-        os.makedirs(sim_dir, exist_ok=True)
+        storage.makedirs(sim_dir)
         return sim_dir
     
     def _save_simulation_state(self, state: SimulationState):
@@ -158,9 +158,8 @@ class SimulationManager:
         state_file = os.path.join(sim_dir, "state.json")
         
         state.updated_at = datetime.now().isoformat()
-        
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(state.to_dict(), f, ensure_ascii=False, indent=2)
+
+        storage.write_json(state_file, state.to_dict())
         
         self._simulations[state.simulation_id] = state
     
@@ -171,12 +170,10 @@ class SimulationManager:
         
         sim_dir = self._get_simulation_dir(simulation_id)
         state_file = os.path.join(sim_dir, "state.json")
-        
-        if not os.path.exists(state_file):
+
+        data = storage.read_json(state_file)
+        if data is None:
             return None
-        
-        with open(state_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
         
         state = SimulationState(
             simulation_id=simulation_id,
@@ -376,19 +373,23 @@ class SimulationManager:
                 )
             
             if state.enable_reddit:
+                reddit_profiles_path = os.path.join(sim_dir, "reddit_profiles.json")
                 generator.save_profiles(
                     profiles=profiles,
-                    file_path=os.path.join(sim_dir, "reddit_profiles.json"),
+                    file_path=reddit_profiles_path,
                     platform="reddit"
                 )
+                storage.push_file(reddit_profiles_path)
             
             if state.enable_twitter:
                 # Twitter使用CSV格式！这是OASIS的要求
+                twitter_profiles_path = os.path.join(sim_dir, "twitter_profiles.csv")
                 generator.save_profiles(
                     profiles=profiles,
-                    file_path=os.path.join(sim_dir, "twitter_profiles.csv"),
+                    file_path=twitter_profiles_path,
                     platform="twitter"
                 )
+                storage.push_file(twitter_profiles_path)
             
             if progress_callback:
                 progress_callback(
@@ -438,8 +439,7 @@ class SimulationManager:
             
             # 保存配置文件
             config_path = os.path.join(sim_dir, "simulation_config.json")
-            with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(sim_params.to_json())
+            storage.write_text(config_path, sim_params.to_json())
             
             state.config_generated = True
             state.config_reasoning = sim_params.generation_reasoning
@@ -481,11 +481,10 @@ class SimulationManager:
         """列出所有模拟"""
         simulations = []
         
-        if os.path.exists(self.SIMULATION_DATA_DIR):
-            for sim_id in os.listdir(self.SIMULATION_DATA_DIR):
+        if storage.exists(self.SIMULATION_DATA_DIR):
+            for sim_id in storage.listdir(self.SIMULATION_DATA_DIR):
                 # 跳过隐藏文件（如 .DS_Store）和非目录文件
-                sim_path = os.path.join(self.SIMULATION_DATA_DIR, sim_id)
-                if sim_id.startswith('.') or not os.path.isdir(sim_path):
+                if sim_id.startswith('.'):
                     continue
                 
                 state = self._load_simulation_state(sim_id)
@@ -513,28 +512,23 @@ class SimulationManager:
             "twitter_profiles.csv" if platform == "twitter" else "reddit_profiles.json",
         )
         
-        if not os.path.exists(profile_path):
+        if not storage.exists(profile_path):
             return []
 
+        loaded = storage.read_json(profile_path)
         if platform == "twitter":
             import csv
 
-            with open(profile_path, 'r', encoding='utf-8', newline='') as f:
+            with open(storage.ensure_local(profile_path), 'r', encoding='utf-8', newline='') as f:
                 return list(csv.DictReader(f))
 
-        with open(profile_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        return loaded if isinstance(loaded, list) else []
     
     def get_simulation_config(self, simulation_id: str) -> Optional[Dict[str, Any]]:
         """获取模拟配置"""
         sim_dir = self._get_simulation_dir(simulation_id)
         config_path = os.path.join(sim_dir, "simulation_config.json")
-        
-        if not os.path.exists(config_path):
-            return None
-        
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        return storage.read_json(config_path)
     
     def get_run_instructions(self, simulation_id: str) -> Dict[str, str]:
         """获取运行说明"""

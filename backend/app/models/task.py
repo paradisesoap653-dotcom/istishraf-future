@@ -4,7 +4,6 @@
 """
 
 import os
-import json
 import uuid
 import threading
 from datetime import datetime
@@ -13,6 +12,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 
 from ..config import Config
+from . import storage
 from ..utils.locale import t
 
 
@@ -107,13 +107,14 @@ class TaskManager:
     @staticmethod
     def _task_file(task_id: str) -> str:
         tasks_dir = os.path.join(Config.UPLOAD_FOLDER, 'tasks')
-        os.makedirs(tasks_dir, exist_ok=True)
+        storage.makedirs(tasks_dir)
         return os.path.join(tasks_dir, f"{task_id}.json")
 
     def _persist_task(self, task: Task) -> None:
+        # يُكتب الملف محليًا ويُنسخ إلى Postgres في الوقت نفسه، فتبقى حالة
+        # المهمة قابلة للاستعادة بعد cold start أو من نسخة أخرى.
         try:
-            with open(self._task_file(task.task_id), 'w', encoding='utf-8') as f:
-                json.dump(task.to_dict(), f, ensure_ascii=False)
+            storage.write_json(self._task_file(task.task_id), task.to_dict())
         except Exception:
             pass
 
@@ -124,10 +125,9 @@ class TaskManager:
             if task:
                 return task
             fpath = self._task_file(task_id)
-            if os.path.exists(fpath):
+            d = storage.read_json(fpath) if storage.exists(fpath) else None
+            if d:
                 try:
-                    with open(fpath, 'r', encoding='utf-8') as f:
-                        d = json.load(f)
                     restored = Task(
                         task_id=d["task_id"],
                         task_type=d.get("task_type", ""),

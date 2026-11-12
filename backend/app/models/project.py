@@ -4,14 +4,13 @@
 """
 
 import os
-import json
 import uuid
-import shutil
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 from ..config import Config
+from . import storage
 
 
 class ProjectStatus(str, Enum):
@@ -113,7 +112,7 @@ class ProjectManager:
     @classmethod
     def _ensure_projects_dir(cls):
         """确保项目目录存在"""
-        os.makedirs(cls.PROJECTS_DIR, exist_ok=True)
+        storage.makedirs(cls.PROJECTS_DIR)
     
     @classmethod
     def _get_project_dir(cls, project_id: str) -> str:
@@ -162,8 +161,8 @@ class ProjectManager:
         # 创建项目目录结构
         project_dir = cls._get_project_dir(project_id)
         files_dir = cls._get_project_files_dir(project_id)
-        os.makedirs(project_dir, exist_ok=True)
-        os.makedirs(files_dir, exist_ok=True)
+        storage.makedirs(project_dir)
+        storage.makedirs(files_dir)
         
         # 保存项目元数据
         cls.save_project(project)
@@ -175,9 +174,8 @@ class ProjectManager:
         """保存项目元数据"""
         project.updated_at = datetime.now().isoformat()
         meta_path = cls._get_project_meta_path(project.project_id)
-        
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            json.dump(project.to_dict(), f, ensure_ascii=False, indent=2)
+
+        storage.write_json(meta_path, project.to_dict())
     
     @classmethod
     def get_project(cls, project_id: str) -> Optional[Project]:
@@ -191,13 +189,11 @@ class ProjectManager:
             Project对象，如果不存在返回None
         """
         meta_path = cls._get_project_meta_path(project_id)
-        
-        if not os.path.exists(meta_path):
+
+        data = storage.read_json(meta_path)
+        if data is None:
             return None
-        
-        with open(meta_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        
+
         return Project.from_dict(data)
     
     @classmethod
@@ -214,7 +210,7 @@ class ProjectManager:
         cls._ensure_projects_dir()
         
         projects = []
-        for project_id in os.listdir(cls.PROJECTS_DIR):
+        for project_id in storage.listdir(cls.PROJECTS_DIR):
             project = cls.get_project(project_id)
             if project:
                 projects.append(project)
@@ -246,12 +242,11 @@ class ProjectManager:
             是否删除成功
         """
         project_dir = cls._get_project_dir(project_id)
-        
-        if not os.path.exists(project_dir):
+
+        if not storage.exists(cls._get_project_meta_path(project_id)) and not storage.isdir(project_dir):
             return False
-        
-        shutil.rmtree(project_dir)
-        return True
+
+        return storage.rmtree(project_dir)
     
     @classmethod
     def save_file_to_project(cls, project_id: str, file_storage, original_filename: str) -> Dict[str, str]:
@@ -267,18 +262,15 @@ class ProjectManager:
             文件信息字典 {filename, path, size}
         """
         files_dir = cls._get_project_files_dir(project_id)
-        os.makedirs(files_dir, exist_ok=True)
-        
+        storage.makedirs(files_dir)
+
         # 生成安全的文件名
         ext = os.path.splitext(original_filename)[1].lower()
         safe_filename = f"{uuid.uuid4().hex[:8]}{ext}"
         file_path = os.path.join(files_dir, safe_filename)
-        
-        # 保存文件
-        file_storage.save(file_path)
-        
-        # 获取文件大小
-        file_size = os.path.getsize(file_path)
+
+        # 保存 الملف محليًا ثم نسخه إلى التخزين الدائم
+        file_size = storage.save_stream(file_path, file_storage)
         
         return {
             "original_filename": original_filename,
@@ -291,30 +283,16 @@ class ProjectManager:
     def save_extracted_text(cls, project_id: str, text: str) -> None:
         """保存提取的文本"""
         text_path = cls._get_project_text_path(project_id)
-        with open(text_path, 'w', encoding='utf-8') as f:
-            f.write(text)
+        storage.write_text(text_path, text)
     
     @classmethod
     def get_extracted_text(cls, project_id: str) -> Optional[str]:
         """获取提取的文本"""
         text_path = cls._get_project_text_path(project_id)
-        
-        if not os.path.exists(text_path):
-            return None
-        
-        with open(text_path, 'r', encoding='utf-8') as f:
-            return f.read()
+        return storage.read_text(text_path)
     
     @classmethod
     def get_project_files(cls, project_id: str) -> List[str]:
         """获取项目的所有文件路径"""
         files_dir = cls._get_project_files_dir(project_id)
-        
-        if not os.path.exists(files_dir):
-            return []
-        
-        return [
-            os.path.join(files_dir, f) 
-            for f in os.listdir(files_dir) 
-            if os.path.isfile(os.path.join(files_dir, f))
-        ]
+        return storage.list_files(files_dir)

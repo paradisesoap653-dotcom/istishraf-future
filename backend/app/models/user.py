@@ -14,13 +14,14 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 
 from ..config import Config
+from . import storage
 
 _db_lock = threading.Lock()
 TOKEN_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
 
 
-class UserStore:
-    """مدير قاعدة بيانات المستخدمين وملكية الموارد"""
+class _SqliteUserStore:
+    """مدير قاعدة بيانات المستخدمين وملكية الموارد (نسخة SQLite للتطوير)"""
 
     @staticmethod
     def _db_path() -> str:
@@ -216,6 +217,243 @@ class UserStore:
         if user.get("role") == "admin":
             return True
         return int(user.get("id")) == int(owner_id)
+
+
+class _PgConnection:
+    """مدير سياق يضمن وجود جداول المستخدمين قبل أي استعلام."""
+
+    def __init__(self, ddl):
+        self._ddl = ddl
+        self._cm = None
+        self._conn = None
+
+    def __enter__(self):
+        self._cm = storage._connect()
+        self._conn = self._cm.__enter__()
+        with self._conn.cursor() as cur:
+            for statement in self._ddl:
+                cur.execute(statement)
+        return self._conn
+
+    def __exit__(self, *exc_info):
+        return self._cm.__exit__(*exc_info)
+
+
+class _PgUserStore:
+    """نسخة PostgreSQL (Neon) من مخزن المستخدمين والملكية.
+
+    تُستخدم تلقائيًا عند ضبط ``DATABASE_URL``. الواجهة مطابقة تمامًا لنسخة
+    SQLite حتى لا تتغير بقية الشيفرة.
+    """
+
+    DDL = (
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGSERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            daily_quota INTEGER NOT NULL DEFAULT 5,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS resource_owners (
+            resource_type TEXT NOT NULL,
+            resource_id TEXT NOT NULL,
+            user_id BIGINT NOT NULL,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (resource_type, resource_id)
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS resource_owners_user_idx ON resource_owners (user_id)",
+    )
+
+    @classmethod
+    def _conn(cls):
+        """سياق اتصال ينشئ الجداول عند الحاجة (يعيد مدير سياق)."""
+        return _PgConnection(cls.DDL)
+
+    @classmethod
+    def init_db(cls) -> None:
+        with _db_lock, cls._conn() as conn, conn.cursor() as cur:
+            for statement in cls.DDL:
+                cur.execute(statement)
+
+    @classmethod
+    def count_users(cls) -> int:
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users")
+            return int(cur.fetchone()[0])
+
+    @classmethod
+    def create_user(cls, name: str, email: str, password: str) -> Dict[str, Any]:
+        clean_name = (name or "").strip()
+        clean_email = (email or "").strip().lower()
+
+        if len(clean_name) < 2:
+            raise ValueError("يرجى إدخال الاسم الكامل (حرفان على الأقل)")
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_email):
+            raise ValueError("يرجى إدخال بريد إلكتروني صحيح")
+        if not password or len(password) < 6:
+            raise ValueError("يجب أن تتكون كلمة المرور من 6 أحرف أو أرقام على الأقل")
+
+        admin_email_env = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
+        now_iso = datetime.now().isoformat()
+        pw_hash = generate_password_hash(password)
+
+        with _db_lock:
+            with cls._conn() as conn, conn.cursor() as cur:
+                cur.execute("SELECT id FROM users WHERE email = %s", (clean_email,))
+                if cur.fetchone():
+                    raise ValueError("هذا البريد الإلكتروني مسجّل بالفعل، يرجى تسجيل الدخول")
+
+                cur.execute("SELECT COUNT(*) FROM users")
+                is_first_user = int(cur.fetchone()[0]) == 0
+                is_admin = (clean_email == admin_email_env) if admin_email_env else is_first_user
+                role = "admin" if is_admin else "user"
+                quota = 999 if is_admin else int(os.environ.get("DEFAULT_USER_DAILY_QUOTA", "5"))
+
+                cur.execute(
+                    """
+                    INSERT INTO users (name, email, password_hash, role, daily_quota, created_at)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (clean_name, clean_email, pw_hash, role, quota, now_iso),
+                )
+                user_id = int(cur.fetchone()[0])
+
+        return {
+            "id": user_id,
+            "name": clean_name,
+            "email": clean_email,
+            "role": role,
+            "daily_quota": quota,
+            "created_at": now_iso,
+        }
+
+    @classmethod
+    def authenticate(cls, email: str, password: str) -> Optional[Dict[str, Any]]:
+        clean_email = (email or "").strip().lower()
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email, password_hash, role, daily_quota, created_at "
+                "FROM users WHERE email = %s",
+                (clean_email,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        if not check_password_hash(row[3], password or ""):
+            return None
+        return {
+            "id": int(row[0]),
+            "name": row[1],
+            "email": row[2],
+            "role": row[4],
+            "daily_quota": int(row[5]),
+            "created_at": row[6],
+        }
+
+    @classmethod
+    def get_user_by_id(cls, user_id: int) -> Optional[Dict[str, Any]]:
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email, role, daily_quota, created_at FROM users WHERE id = %s",
+                (int(user_id),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": int(row[0]),
+            "name": row[1],
+            "email": row[2],
+            "role": row[3],
+            "daily_quota": int(row[4]),
+            "created_at": row[5],
+        }
+
+    @classmethod
+    def list_users(cls) -> List[Dict[str, Any]]:
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email, role, daily_quota, created_at FROM users ORDER BY id DESC"
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "id": int(r[0]),
+                "name": r[1],
+                "email": r[2],
+                "role": r[3],
+                "daily_quota": int(r[4]),
+                "created_at": r[5],
+            }
+            for r in rows
+        ]
+
+    @classmethod
+    def assign_owner(cls, resource_type: str, resource_id: str, user_id: int) -> None:
+        now_iso = datetime.now().isoformat()
+        with _db_lock:
+            with cls._conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO resource_owners (resource_type, resource_id, user_id, created_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (resource_type, resource_id)
+                    DO UPDATE SET user_id = EXCLUDED.user_id
+                    """,
+                    (resource_type, resource_id, int(user_id), now_iso),
+                )
+
+    @classmethod
+    def get_owner_id(cls, resource_type: str, resource_id: str) -> Optional[int]:
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT user_id FROM resource_owners WHERE resource_type = %s AND resource_id = %s",
+                (resource_type, resource_id),
+            )
+            row = cur.fetchone()
+        return int(row[0]) if row else None
+
+    @classmethod
+    def count_today_usage(cls, user_id: int) -> int:
+        today_prefix = datetime.now().strftime("%Y-%m-%d")
+        with cls._conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM resource_owners
+                WHERE resource_type = 'project' AND user_id = %s AND created_at LIKE %s
+                """,
+                (int(user_id), f"{today_prefix}%"),
+            )
+            return int(cur.fetchone()[0])
+
+    @classmethod
+    def can_access(cls, resource_type: str, resource_id: str, user: Optional[Dict[str, Any]]) -> bool:
+        owner_id = cls.get_owner_id(resource_type, resource_id)
+        if owner_id is None:
+            return True
+        if not user:
+            return False
+        if user.get("role") == "admin":
+            return True
+        return int(user.get("id")) == int(owner_id)
+
+
+class _UserStoreProxy:
+    """توجيه تلقائي إلى PostgreSQL عند توفر DATABASE_URL، وإلا SQLite."""
+
+    def __getattr__(self, item):
+        backend = _PgUserStore if storage.is_durable() else _SqliteUserStore
+        return getattr(backend, item)
+
+
+UserStore = _UserStoreProxy()
 
 
 def _serializer() -> URLSafeTimedSerializer:

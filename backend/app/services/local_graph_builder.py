@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from ..config import Config
+from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 
@@ -19,19 +20,19 @@ logger = get_logger("mirofish.local_graph")
 
 def local_graph_path(graph_id: str) -> str:
     graphs_dir = os.path.join(Config.UPLOAD_FOLDER, "graphs")
-    os.makedirs(graphs_dir, exist_ok=True)
+    storage.makedirs(graphs_dir)
     return os.path.join(graphs_dir, f"{graph_id}.json")
 
 
 def load_local_graph(graph_id: str) -> Optional[Dict[str, Any]]:
+    """يقرأ الرسم من القرص المحلي أو من التخزين الدائم إن لم يكن محليًا."""
     if not graph_id:
         return None
     path = local_graph_path(graph_id)
-    if not os.path.exists(path):
+    if not storage.exists(path):
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return storage.read_json(path)
     except Exception as err:
         logger.warning(f"Failed reading local graph {graph_id}: {err}")
         return None
@@ -136,7 +137,6 @@ def build_local_graph_via_llm(
         "total_edges": len(edges),
     }
 
-    with open(local_graph_path(graph_id), "w", encoding="utf-8") as f:
-        json.dump(graph_data, f, ensure_ascii=False, indent=2)
+    storage.write_json(local_graph_path(graph_id), graph_data)
 
     return graph_data

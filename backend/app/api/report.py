@@ -10,6 +10,7 @@ from flask import request, jsonify, send_file
 
 from . import report_bp
 from ..config import Config
+from ..models import storage
 from ..services.report_agent import ReportAgent, ReportManager, ReportStatus
 from ..services.simulation_manager import SimulationManager
 from ..services.simulation_runner import SimulationRunner, RunnerStatus
@@ -534,8 +535,8 @@ def download_report(report_id: str):
             }), 404
         
         md_path = ReportManager._get_report_markdown_path(report_id)
-        
-        if not os.path.exists(md_path):
+
+        if not storage.exists(md_path):
             # 如果MD文件不存在，生成一个临时文件
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
@@ -549,7 +550,7 @@ def download_report(report_id: str):
             )
         
         return send_file(
-            md_path,
+            storage.ensure_local(md_path),
             as_attachment=True,
             download_name=f"{report_id}.md"
         )
@@ -797,14 +798,12 @@ def get_single_section(report_id: str, section_index: int):
     try:
         section_path = ReportManager._get_section_path(report_id, section_index)
         
-        if not os.path.exists(section_path):
+        content = storage.read_text(section_path)
+        if content is None:
             return jsonify({
                 "success": False,
                 "error": t('api.sectionNotFound', index=f"{section_index:02d}")
             }), 404
-        
-        with open(section_path, 'r', encoding='utf-8') as f:
-            content = f.read()
         
         return jsonify({
             "success": True,

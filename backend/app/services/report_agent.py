@@ -19,6 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..config import Config
+from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
@@ -1952,7 +1953,7 @@ class ReportManager:
     @classmethod
     def _ensure_reports_dir(cls):
         """确保报告根目录存在"""
-        os.makedirs(cls.REPORTS_DIR, exist_ok=True)
+        storage.makedirs(cls.REPORTS_DIR)
     
     @classmethod
     def _get_report_folder(cls, report_id: str) -> str:
@@ -1963,7 +1964,7 @@ class ReportManager:
     def _ensure_report_folder(cls, report_id: str) -> str:
         """确保报告文件夹存在并返回路径"""
         folder = cls._get_report_folder(report_id)
-        os.makedirs(folder, exist_ok=True)
+        storage.makedirs(folder)
         return folder
     
     @classmethod
@@ -2022,19 +2023,19 @@ class ReportManager:
             }
         """
         log_path = cls._get_console_log_path(report_id)
-        
-        if not os.path.exists(log_path):
+
+        if not storage.exists(log_path):
             return {
                 "logs": [],
                 "total_lines": 0,
                 "from_line": 0,
                 "has_more": False
             }
-        
+
         logs = []
         total_lines = 0
-        
-        with open(log_path, 'r', encoding='utf-8') as f:
+
+        with open(storage.ensure_local(log_path), 'r', encoding='utf-8') as f:
             for i, line in enumerate(f):
                 total_lines = i + 1
                 if i >= from_line:
@@ -2133,8 +2134,7 @@ class ReportManager:
         """
         cls._ensure_report_folder(report_id)
         
-        with open(cls._get_outline_path(report_id), 'w', encoding='utf-8') as f:
-            json.dump(outline.to_dict(), f, ensure_ascii=False, indent=2)
+        storage.write_json(cls._get_outline_path(report_id), outline.to_dict())
         
         logger.info(t('report.outlineSaved', reportId=report_id))
     
@@ -2169,8 +2169,7 @@ class ReportManager:
         # 保存文件
         file_suffix = f"section_{section_index:02d}.md"
         file_path = os.path.join(cls._get_report_folder(report_id), file_suffix)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(md_content)
+        storage.write_text(file_path, md_content)
 
         logger.info(t('report.sectionFileSaved', reportId=report_id, fileSuffix=file_suffix))
         return file_path
@@ -2269,19 +2268,12 @@ class ReportManager:
             "updated_at": datetime.now().isoformat()
         }
         
-        with open(cls._get_progress_path(report_id), 'w', encoding='utf-8') as f:
-            json.dump(progress_data, f, ensure_ascii=False, indent=2)
+        storage.write_json(cls._get_progress_path(report_id), progress_data)
     
     @classmethod
     def get_progress(cls, report_id: str) -> Optional[Dict[str, Any]]:
         """获取报告生成进度"""
-        path = cls._get_progress_path(report_id)
-        
-        if not os.path.exists(path):
-            return None
-        
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        return storage.read_json(cls._get_progress_path(report_id))
     
     @classmethod
     def get_generated_sections(cls, report_id: str) -> List[Dict[str, Any]]:
@@ -2291,16 +2283,15 @@ class ReportManager:
         返回所有已保存的章节文件信息
         """
         folder = cls._get_report_folder(report_id)
-        
-        if not os.path.exists(folder):
+
+        if not storage.exists(folder):
             return []
-        
+
         sections = []
-        for filename in sorted(os.listdir(folder)):
+        for filename in sorted(storage.listdir(folder)):
             if filename.startswith('section_') and filename.endswith('.md'):
                 file_path = os.path.join(folder, filename)
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
+                content = storage.read_text(file_path) or ""
 
                 # 从文件名解析章节索引
                 parts = filename.replace('.md', '').split('_')
@@ -2338,8 +2329,7 @@ class ReportManager:
         
         # 保存完整报告
         full_path = cls._get_report_markdown_path(report_id)
-        with open(full_path, 'w', encoding='utf-8') as f:
-            f.write(md_content)
+        storage.write_text(full_path, md_content)
         
         logger.info(t('report.fullReportAssembled', reportId=report_id))
         return md_content
@@ -2476,8 +2466,7 @@ class ReportManager:
         cls._ensure_report_folder(report.report_id)
         
         # 保存元信息JSON
-        with open(cls._get_report_path(report.report_id), 'w', encoding='utf-8') as f:
-            json.dump(report.to_dict(), f, ensure_ascii=False, indent=2)
+        storage.write_json(cls._get_report_path(report.report_id), report.to_dict())
         
         # 保存大纲
         if report.outline:
@@ -2485,8 +2474,7 @@ class ReportManager:
         
         # 保存完整Markdown报告
         if report.markdown_content:
-            with open(cls._get_report_markdown_path(report.report_id), 'w', encoding='utf-8') as f:
-                f.write(report.markdown_content)
+            storage.write_text(cls._get_report_markdown_path(report.report_id), report.markdown_content)
         
         logger.info(t('report.reportSaved', reportId=report.report_id))
     
@@ -2494,17 +2482,18 @@ class ReportManager:
     def get_report(cls, report_id: str) -> Optional[Report]:
         """获取报告"""
         path = cls._get_report_path(report_id)
-        
-        if not os.path.exists(path):
+
+        if not storage.exists(path):
             # 兼容旧格式：检查直接存储在reports目录下的文件
             old_path = os.path.join(cls.REPORTS_DIR, f"{report_id}.json")
-            if os.path.exists(old_path):
+            if storage.exists(old_path):
                 path = old_path
             else:
                 return None
-        
-        with open(path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+
+        data = storage.read_json(path)
+        if data is None:
+            return None
         
         # 重建Report对象
         outline = None
@@ -2526,9 +2515,7 @@ class ReportManager:
         markdown_content = data.get('markdown_content', '')
         if not markdown_content:
             full_report_path = cls._get_report_markdown_path(report_id)
-            if os.path.exists(full_report_path):
-                with open(full_report_path, 'r', encoding='utf-8') as f:
-                    markdown_content = f.read()
+            markdown_content = storage.read_text(full_report_path) or ""
         
         return Report(
             report_id=data['report_id'],
@@ -2548,10 +2535,10 @@ class ReportManager:
         """根据模拟ID获取报告"""
         cls._ensure_reports_dir()
         
-        for item in os.listdir(cls.REPORTS_DIR):
+        for item in storage.listdir(cls.REPORTS_DIR):
             item_path = os.path.join(cls.REPORTS_DIR, item)
             # 新格式：文件夹
-            if os.path.isdir(item_path):
+            if storage.isdir(item_path) or (storage.exists(item_path) and not item.endswith('.json')):
                 report = cls.get_report(item)
                 if report and report.simulation_id == simulation_id:
                     return report
@@ -2570,10 +2557,10 @@ class ReportManager:
         cls._ensure_reports_dir()
         
         reports = []
-        for item in os.listdir(cls.REPORTS_DIR):
+        for item in storage.listdir(cls.REPORTS_DIR):
             item_path = os.path.join(cls.REPORTS_DIR, item)
             # 新格式：文件夹
-            if os.path.isdir(item_path):
+            if storage.isdir(item_path) or (storage.exists(item_path) and not item.endswith('.json')):
                 report = cls.get_report(item)
                 if report:
                     if simulation_id is None or report.simulation_id == simulation_id:
@@ -2594,13 +2581,11 @@ class ReportManager:
     @classmethod
     def delete_report(cls, report_id: str) -> bool:
         """删除报告（整个文件夹）"""
-        import shutil
-        
         folder_path = cls._get_report_folder(report_id)
-        
+
         # 新格式：删除整个文件夹
-        if os.path.exists(folder_path) and os.path.isdir(folder_path):
-            shutil.rmtree(folder_path)
+        if storage.exists(folder_path):
+            storage.rmtree(folder_path)
             logger.info(t('report.reportFolderDeleted', reportId=report_id))
             return True
         
@@ -2609,11 +2594,11 @@ class ReportManager:
         old_json_path = os.path.join(cls.REPORTS_DIR, f"{report_id}.json")
         old_md_path = os.path.join(cls.REPORTS_DIR, f"{report_id}.md")
         
-        if os.path.exists(old_json_path):
-            os.remove(old_json_path)
+        if storage.exists(old_json_path):
+            storage.remove(old_json_path)
             deleted = True
-        if os.path.exists(old_md_path):
-            os.remove(old_md_path)
+        if storage.exists(old_md_path):
+            storage.remove(old_md_path)
             deleted = True
         
         return deleted
