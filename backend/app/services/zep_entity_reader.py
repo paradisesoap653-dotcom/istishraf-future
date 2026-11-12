@@ -78,11 +78,8 @@ class ZepEntityReader:
     """
     
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = get_zep_client(self.api_key)
+        self.api_key = (api_key or Config.ZEP_API_KEY or "").strip()
+        self.client = get_zep_client(self.api_key) if self.api_key else None
     
     def _call_with_retry(
         self, 
@@ -122,6 +119,23 @@ class ZepEntityReader:
         """
         logger.info(f"获取图谱 {graph_id} 的所有节点...")
 
+        from .local_graph_builder import load_local_graph
+        local_graph = load_local_graph(graph_id)
+        if local_graph is not None:
+            return [
+                {
+                    "uuid": n.get("uuid", ""),
+                    "name": n.get("name", ""),
+                    "labels": n.get("labels", []),
+                    "summary": n.get("summary", ""),
+                    "attributes": n.get("attributes", {}),
+                }
+                for n in local_graph.get("nodes", [])
+            ]
+
+        if self.client is None:
+            return []
+
         nodes = fetch_all_nodes(self.client, graph_id)
 
         nodes_data = []
@@ -148,6 +162,24 @@ class ZepEntityReader:
             边列表
         """
         logger.info(f"获取图谱 {graph_id} 的所有边...")
+
+        from .local_graph_builder import load_local_graph
+        local_graph = load_local_graph(graph_id)
+        if local_graph is not None:
+            return [
+                {
+                    "uuid": e.get("uuid", ""),
+                    "name": e.get("name", ""),
+                    "fact": e.get("fact", ""),
+                    "source_node_uuid": e.get("source_node_uuid", ""),
+                    "target_node_uuid": e.get("target_node_uuid", ""),
+                    "attributes": e.get("attributes", {}),
+                }
+                for e in local_graph.get("edges", [])
+            ]
+
+        if self.client is None:
+            return []
 
         edges = fetch_all_edges(self.client, graph_id)
 
@@ -352,6 +384,14 @@ class ZepEntityReader:
             EntityNode或None
         """
         try:
+            from .local_graph_builder import load_local_graph
+            if load_local_graph(graph_id) is not None or self.client is None:
+                filtered = self.filter_defined_entities(graph_id=graph_id, enrich_with_edges=True)
+                for ent in filtered.entities:
+                    if ent.uuid == entity_uuid:
+                        return ent
+                return None
+
             # 使用重试机制获取节点
             node = self._call_with_retry(
                 func=lambda: self.client.graph.node.get(uuid_=entity_uuid),

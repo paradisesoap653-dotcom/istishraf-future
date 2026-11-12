@@ -88,6 +88,12 @@ def _delete_cloud_graph_if_present(graph_id: str | None) -> None:
                 f"Graph {graph_id} is in use by active consumer(s): "
                 f"{', '.join(active_simulations)}"
             )
+        if not Config.ZEP_API_KEY or graph_id.startswith("graph_local_") or graph_id.startswith("graph_demo_"):
+            from ..services.local_graph_builder import local_graph_path
+            lpath = local_graph_path(graph_id)
+            if os.path.exists(lpath) and not graph_id.startswith("graph_demo_"):
+                os.remove(lpath)
+            return
         try:
             GraphBuilderService(api_key=Config.ZEP_API_KEY).delete_graph(graph_id)
         except NotFoundError:
@@ -501,10 +507,10 @@ def _build_graph_impl():
     try:
         logger.info("=== 开始构建图谱 ===")
         
-        # 检查配置
+        # 检查配置（支持使用 LLM 本地引擎而无需强制 ZEP_API_KEY）
         errors = []
-        if not Config.ZEP_API_KEY:
-            errors.append(t('api.zepApiKeyMissing'))
+        if not Config.ZEP_API_KEY and not Config.LLM_API_KEY:
+            errors.append(t('api.llmApiKeyMissing'))
         if errors:
             logger.error(f"配置错误: {errors}")
             return jsonify({
@@ -677,6 +683,38 @@ def _build_graph_impl():
                     status=TaskStatus.PROCESSING,
                     message=t('progress.initGraphService')
                 )
+
+                if not (Config.ZEP_API_KEY and Config.ZEP_API_KEY.strip()):
+                    from ..services.local_graph_builder import build_local_graph_via_llm
+                    task_manager.update_task(task_id, message=t('progress.creatingZepGraph'), progress=30)
+                    graph_data = build_local_graph_via_llm(
+                        text=text,
+                        ontology=ontology,
+                        graph_name=graph_name,
+                    )
+                    graph_id = graph_data["graph_id"]
+                    node_count = graph_data.get("node_count", 0)
+                    edge_count = graph_data.get("edge_count", 0)
+                    with _project_build_lock(project_id):
+                        project.graph_id = graph_id
+                        project.status = ProjectStatus.GRAPH_COMPLETED
+                        project.error = None
+                        ProjectManager.save_project(project)
+                        task_manager.update_task(
+                            task_id,
+                            status=TaskStatus.COMPLETED,
+                            message=t('progress.graphBuildComplete'),
+                            progress=100,
+                            result={
+                                "project_id": project_id,
+                                "graph_id": graph_id,
+                                "node_count": node_count,
+                                "edge_count": edge_count,
+                                "chunk_count": 1,
+                                "zep_batch_id": None,
+                            },
+                        )
+                    return
                 
                 # 创建图谱构建服务
                 builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)

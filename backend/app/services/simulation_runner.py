@@ -435,7 +435,7 @@ class SimulationRunner:
             cls._save_run_state(state)
         
         # 如果启用图谱记忆更新，创建更新器
-        if enable_graph_memory_update:
+        if enable_graph_memory_update and Config.ZEP_API_KEY and not (graph_id or "").startswith("graph_local_"):
             if not graph_id:
                 raise ValueError("启用图谱记忆更新时必须提供 graph_id")
             

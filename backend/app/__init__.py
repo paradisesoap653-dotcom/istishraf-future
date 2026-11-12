@@ -102,7 +102,7 @@ def create_app(config_class=Config):
         return {
             'success': True,
             'data': {
-                'configured': has_llm and has_zep,
+                'configured': has_llm,
                 'has_llm_key': has_llm,
                 'has_zep_key': has_zep,
                 'can_manage': can_manage,
@@ -156,7 +156,7 @@ def create_app(config_class=Config):
         return {
             'success': True,
             'data': {
-                'configured': has_llm and has_zep,
+                'configured': has_llm,
                 'has_llm_key': has_llm,
                 'has_zep_key': has_zep,
                 'llm_base_url': Config.LLM_BASE_URL,

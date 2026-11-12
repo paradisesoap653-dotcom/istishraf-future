@@ -428,11 +428,8 @@ class ZepToolsService:
     RETRY_DELAY = 2.0
     
     def __init__(self, api_key: Optional[str] = None, llm_client: Optional[LLMClient] = None):
-        self.api_key = api_key or Config.ZEP_API_KEY
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY 未配置")
-        
-        self.client = get_zep_client(self.api_key)
+        self.api_key = (api_key or Config.ZEP_API_KEY or "").strip()
+        self.client = get_zep_client(self.api_key) if self.api_key else None
         # LLM客户端用于InsightForge生成子问题
         self._llm_client = llm_client
         logger.info(t("console.zepToolsInitialized"))
@@ -477,6 +474,10 @@ class ZepToolsService:
             SearchResult: 搜索结果
         """
         logger.info(t("console.graphSearch", graphId=graph_id, query=query[:50]))
+
+        from .local_graph_builder import load_local_graph
+        if self.client is None or load_local_graph(graph_id) is not None:
+            return self._local_search(graph_id=graph_id, query=query, limit=limit, scope=scope)
         
         zep_query = normalize_zep_search_query(query)
         zep_limit = normalize_zep_search_limit(limit)
@@ -655,6 +656,23 @@ class ZepToolsService:
         """
         logger.info(t("console.fetchingAllNodes", graphId=graph_id))
 
+        from .local_graph_builder import load_local_graph
+        local_graph = load_local_graph(graph_id)
+        if local_graph is not None:
+            return [
+                NodeInfo(
+                    uuid=str(n.get("uuid", "")),
+                    name=n.get("name", ""),
+                    labels=n.get("labels", []),
+                    summary=n.get("summary", ""),
+                    attributes=n.get("attributes", {}),
+                )
+                for n in local_graph.get("nodes", [])
+            ]
+
+        if self.client is None:
+            return []
+
         nodes = fetch_all_nodes(self.client, graph_id)
 
         result = []
@@ -683,6 +701,26 @@ class ZepToolsService:
             边列表（包含created_at, valid_at, invalid_at, expired_at）
         """
         logger.info(t("console.fetchingAllEdges", graphId=graph_id))
+
+        from .local_graph_builder import load_local_graph
+        local_graph = load_local_graph(graph_id)
+        if local_graph is not None:
+            return [
+                EdgeInfo(
+                    uuid=str(e.get("uuid", "")),
+                    name=e.get("name", ""),
+                    fact=e.get("fact", ""),
+                    source_node_uuid=e.get("source_node_uuid", ""),
+                    target_node_uuid=e.get("target_node_uuid", ""),
+                    source_node_name=e.get("source_node_name"),
+                    target_node_name=e.get("target_node_name"),
+                    created_at=e.get("created_at"),
+                )
+                for e in local_graph.get("edges", [])
+            ]
+
+        if self.client is None:
+            return []
 
         edges = fetch_all_edges(self.client, graph_id)
 
@@ -720,6 +758,28 @@ class ZepToolsService:
             节点信息或None
         """
         logger.info(t("console.fetchingNodeDetail", uuid=node_uuid[:8]))
+
+        if self.client is None:
+            import os
+            graphs_dir = os.path.join(Config.UPLOAD_FOLDER, "graphs")
+            if os.path.isdir(graphs_dir):
+                for fname in os.listdir(graphs_dir):
+                    if fname.endswith(".json"):
+                        try:
+                            with open(os.path.join(graphs_dir, fname), "r", encoding="utf-8") as gf:
+                                gdata = json.load(gf)
+                            for n in gdata.get("nodes", []):
+                                if str(n.get("uuid")) == str(node_uuid):
+                                    return NodeInfo(
+                                        uuid=str(n.get("uuid", "")),
+                                        name=n.get("name", ""),
+                                        labels=n.get("labels", []),
+                                        summary=n.get("summary", ""),
+                                        attributes=n.get("attributes", {}),
+                                    )
+                        except Exception:
+                            pass
+            return None
         
         try:
             node = self._call_with_retry(
