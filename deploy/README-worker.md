@@ -44,7 +44,7 @@ sudo git clone https://github.com/paradisesoap653-dotcom/istishraf-future.git /o
 sudo chown -R istishraf:istishraf /opt/istishraf
 
 sudo -u istishraf python3.12 -m venv /opt/istishraf/.venv
-sudo -u istishraf /opt/istishraf/.venv/bin/pip install -r /opt/istishraf/backend/requirements.txt "psycopg[binary]" psycopg_pool
+sudo -u istishraf /opt/istishraf/.venv/bin/pip install -r /opt/istishraf/backend/requirements-worker.txt
 ```
 
 `/etc/istishraf-worker.env` (صلاحيات 600، ملكية root):
