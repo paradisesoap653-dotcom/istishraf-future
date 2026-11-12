@@ -731,7 +731,7 @@
     "nameLabel": "Full Name",
     "namePlaceholder": "Your Name",
     "emailLabel": "Email Address",
-    "emailPlaceholder": "name@example.com",
+    "emailPlaceholder": "name{'@'}example.com",
     "passwordLabel": "Password",
     "passwordPlaceholder": "At least 6 characters",
     "submitLogin": "Sign In",

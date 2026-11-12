@@ -732,7 +732,7 @@
     "nameLabel": "الاسم الكامل",
     "namePlaceholder": "مثال: أحمد محمد",
     "emailLabel": "البريد الإلكتروني",
-    "emailPlaceholder": "name@example.com",
+    "emailPlaceholder": "name{'@'}example.com",
     "passwordLabel": "كلمة المرور",
     "passwordPlaceholder": "6 أحرف أو أرقام على الأقل",
     "submitLogin": "تسجيل الدخول",

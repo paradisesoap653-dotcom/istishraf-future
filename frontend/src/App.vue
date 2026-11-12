@@ -71,7 +71,8 @@ html[data-theme="dark"] {
 
 html, body {
   max-width: 100%;
-  overflow-x: hidden;
+  /* Unlike hidden, clip doesn't create nested vertical scroll containers. */
+  overflow-x: clip;
   overscroll-behavior-y: contain;
   -webkit-tap-highlight-color: transparent;
   background-color: var(--bg-page);
