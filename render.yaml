@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: istishraf-app
+    runtime: docker
+    plan: standard
+    healthCheckPath: /health
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: LLM_BASE_URL
+        value: https://api.openai.com/v1
+      - key: LLM_MODEL_NAME
+        value: gpt-4o-mini
+      - key: LLM_API_KEY
+        sync: false
+      - key: ZEP_API_KEY
+        sync: false
+    disk:
+      name: istishraf-uploads
+      mountPath: /app/backend/uploads
+      sizeGB: 5

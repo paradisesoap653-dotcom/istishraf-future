@@ -1,0 +1,57 @@
+name: Build Istishraf Android APK & AAB
+
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "رابط الخادم السحابي الرسمي (مثال: https://istishraf.up.railway.app)"
+        required: true
+        default: "https://your-server-url.up.railway.app"
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Java 21 (Required by Capacitor / Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build Frontend & Sync Capacitor Android
+        working-directory: frontend
+        env:
+          VITE_API_BASE_URL: ${{ github.event.inputs.server_url }}
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          npx cap sync android
+
+      - name: Build Installable APK & Google Play AAB
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug bundleRelease
+
+      - name: Upload Ready-to-Install Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Istishraf-Android-APK
+          path: frontend/android/app/build/outputs/apk/debug/*.apk
+
+      - name: Upload Google Play Bundle (AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Istishraf-PlayStore-AAB
+          path: frontend/android/app/build/outputs/bundle/release/*.aab

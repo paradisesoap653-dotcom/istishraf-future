@@ -1,0 +1,14 @@
+services:
+  istishraf:
+    build: .
+    container_name: istishraf-app
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    volumes:
+      - istishraf_data:/app/backend/uploads
+
+volumes:
+  istishraf_data:

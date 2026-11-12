@@ -1,0 +1,9 @@
+{
+  "appId": "com.istishraf.app",
+  "appName": "استشراف",
+  "webDir": "webroot",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https"
+  }
+}

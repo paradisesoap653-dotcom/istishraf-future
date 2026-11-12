@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">استشراف</string>
+    <string name="title_activity_main">استشراف</string>
+    <string name="package_name">com.istishraf.app</string>
+    <string name="custom_url_scheme">com.istishraf.app</string>
+</resources>
