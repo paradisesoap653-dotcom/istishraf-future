@@ -6,7 +6,7 @@
       <div class="header-tools">
         <button class="tool-btn" @click="$emit('refresh')" :disabled="loading" :title="$t('graph.refreshGraph')">
           <span class="icon-refresh" :class="{ 'spinning': loading }">↻</span>
-          <span class="btn-text">Refresh</span>
+          <span class="btn-text">{{ $t('graph.refreshGraph') }}</span>
         </button>
         <button class="tool-btn" @click="$emit('toggle-maximize')" :title="$t('graph.toggleMaximize')">
           <span class="icon-maximize">⛶</span>
@@ -215,7 +215,7 @@
 
     <!-- 底部图例 (Bottom Left) -->
     <div v-if="graphData && entityTypes.length" class="graph-legend">
-      <span class="legend-title">Entity Types</span>
+      <span class="legend-title">{{ $i18n.locale === 'ar' ? 'أنواع الكيانات' : 'Entity Types' }}</span>
       <div class="legend-items">
         <div class="legend-item" v-for="type in entityTypes" :key="type.name">
           <span class="legend-dot" :style="{ background: type.color }"></span>
@@ -230,7 +230,7 @@
         <input type="checkbox" v-model="showEdgeLabels" />
         <span class="slider"></span>
       </label>
-      <span class="toggle-label">Show Edge Labels</span>
+      <span class="toggle-label">{{ $i18n.locale === 'ar' ? 'إظهار العلاقات' : 'Show Edge Labels' }}</span>
     </div>
   </div>
 </template>

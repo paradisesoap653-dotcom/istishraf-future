@@ -1,9 +1,35 @@
 <template>
+  <PullToRefresh />
   <router-view />
 </template>
 
 <script setup>
+import { onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import './store/theme'
+import { authState } from './store/auth'
+import PullToRefresh from './components/PullToRefresh.vue'
+
+const router = useRouter()
+const route = useRoute()
+
+onMounted(() => {
+  window.__istishrafHandleBack = () => {
+    if (authState.modalOpen) {
+      authState.modalOpen = false
+      return 'handled'
+    }
+    if (route.path && route.path !== '/') {
+      if (window.history.state && window.history.state.back) {
+        router.back()
+      } else {
+        router.push('/')
+      }
+      return 'handled'
+    }
+    return 'exit'
+  }
+})
 </script>
 
 <style>
@@ -46,6 +72,7 @@ html[data-theme="dark"] {
 html, body {
   max-width: 100%;
   overflow-x: hidden;
+  overscroll-behavior-y: contain;
   -webkit-tap-highlight-color: transparent;
   background-color: var(--bg-page);
   color: var(--text-primary);
@@ -108,6 +135,12 @@ html[dir="rtl"] .btn-arrow {
   transform: scaleX(-1);
 }
 
+.header-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 /* نظام القراءة الليلية الشامل للصفحات الداخلية والبطاقات والنوافذ المنبثقة */
 html[data-theme="dark"] .main-view,
 html[data-theme="dark"] .process-container,
@@ -124,7 +157,8 @@ html[data-theme="dark"] .app-header {
 
 html[data-theme="dark"] .brand,
 html[data-theme="dark"] .status-indicator,
-html[data-theme="dark"] .step-label {
+html[data-theme="dark"] .step-label,
+html[data-theme="dark"] .step-name {
   color: var(--text-primary) !important;
 }
 
@@ -132,7 +166,9 @@ html[data-theme="dark"] .panel-wrapper,
 html[data-theme="dark"] .project-card,
 html[data-theme="dark"] .auth-card,
 html[data-theme="dark"] .api-modal-card,
-html[data-theme="dark"] .pwa-modal-card {
+html[data-theme="dark"] .pwa-modal-card,
+html[data-theme="dark"] .graph-panel,
+html[data-theme="dark"] .graph-legend {
   background-color: var(--bg-card) !important;
   border-color: var(--border-frame) !important;
   color: var(--text-primary) !important;
@@ -140,7 +176,8 @@ html[data-theme="dark"] .pwa-modal-card {
 
 html[data-theme="dark"] .card-title,
 html[data-theme="dark"] .auth-title,
-html[data-theme="dark"] .modal-title {
+html[data-theme="dark"] .modal-title,
+html[data-theme="dark"] .panel-title {
   color: var(--text-primary) !important;
 }
 
@@ -165,35 +202,77 @@ html[data-theme="dark"] .auth-trigger-btn.dark {
   color: #FFFFFF !important;
 }
 
-/* Responsive headers & split views on mobile screens */
+/* تنسيق متجاوب كامل لشاشات الهاتف لمنع أي تداخل في الرأس أو اللوحات */
 @media (max-width: 900px) {
+  .main-view {
+    height: auto !important;
+    min-height: 100vh !important;
+    overflow-y: visible !important;
+  }
+
   .app-header {
     height: auto !important;
-    min-height: 56px;
+    min-height: 58px;
     flex-wrap: wrap;
-    padding: 8px 14px !important;
-    gap: 8px;
+    justify-content: space-between;
+    padding: 10px 12px !important;
+    gap: 10px;
+    position: relative !important;
+  }
+
+  .header-left {
+    order: 1;
   }
 
   .header-right {
+    order: 2;
     flex-wrap: wrap;
-    gap: 8px !important;
+    justify-content: center;
+    width: 100%;
+    gap: 6px !important;
+  }
+
+  .header-center {
+    position: static !important;
+    left: auto !important;
+    transform: none !important;
+    order: 3;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    padding-top: 4px;
+    border-top: 1px solid var(--border-frame);
+  }
+
+  .step-divider {
+    display: none !important;
   }
 
   .content-area {
     flex-direction: column !important;
     height: auto !important;
-    min-height: calc(100vh - 64px);
-    overflow-y: auto !important;
+    min-height: calc(100vh - 120px);
+    overflow-y: visible !important;
+    padding: 8px;
+    gap: 12px;
   }
 
   .panel-wrapper.left,
   .panel-wrapper.right {
     width: 100% !important;
-    min-height: 440px;
     opacity: 1 !important;
     transform: none !important;
+    border: 1.5px solid var(--border-frame) !important;
+    border-radius: 12px;
+    overflow: hidden;
   }
+
+  .panel-wrapper.mobile-hidden { display: none !important; }
+  .panel-wrapper.left { height: 480px !important; flex: none; }
+  .panel-wrapper.right { height: auto !important; min-height: 440px; }
+  .panel-wrapper.right > * { height: auto !important; min-height: 440px; }
+  .panel-wrapper.right .scroll-container { overflow: visible !important; }
+  .graph-legend { max-width: calc(100% - 24px); max-height: 115px; overflow: auto; bottom: 12px !important; left: 12px !important; }
 }
 
 /* Scrollbar styling */

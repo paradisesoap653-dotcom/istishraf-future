@@ -3,6 +3,7 @@
     <!-- Header -->
     <header class="app-header">
       <div class="header-left">
+        <NavBackButton />
         <div class="brand" @click="router.push('/')"><span style="color:#FF4500">◈</span> استشراف</div>
       </div>
       
@@ -42,7 +43,7 @@
     <!-- Main Content Area -->
     <main class="content-area">
       <!-- Left Panel: Graph -->
-      <div class="panel-wrapper left" :style="leftPanelStyle">
+      <div class="panel-wrapper left" :class="{ 'mobile-hidden': viewMode === 'workbench' }" :style="leftPanelStyle">
         <GraphPanel 
           :graphData="graphData"
           :loading="graphLoading"
@@ -54,7 +55,7 @@
       </div>
 
       <!-- Right Panel: Step3 开始模拟 -->
-      <div class="panel-wrapper right" :style="rightPanelStyle">
+      <div class="panel-wrapper right" :class="{ 'mobile-hidden': viewMode === 'graph' }" :style="rightPanelStyle">
         <Step3Simulation
           :simulationId="currentSimulationId"
           :maxRounds="maxRounds"
@@ -83,6 +84,7 @@ import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PwaInstallButton from '../components/PwaInstallButton.vue'
 import AuthModal from '../components/AuthModal.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
+import NavBackButton from '../components/NavBackButton.vue'
 import ApiSettingsModal from '../components/ApiSettingsModal.vue'
 import { useI18n } from 'vue-i18n'
 
