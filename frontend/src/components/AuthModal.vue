@@ -198,13 +198,13 @@ onMounted(() => {
 }
 
 .auth-trigger-btn.dark {
-  background: rgba(255, 255, 255, 0.12);
-  color: #FFF;
-  border-color: rgba(255, 255, 255, 0.4);
+  background: #111827;
+  color: #FFFFFF;
+  border-color: #111827;
 }
 
 .auth-trigger-btn.dark:hover {
-  background: rgba(255, 255, 255, 0.22);
+  background: #1F2937;
 }
 
 .user-pill {
@@ -219,9 +219,9 @@ onMounted(() => {
 }
 
 .user-pill.dark {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: rgba(255, 255, 255, 0.28);
-  color: #FFF;
+  background: #111827;
+  border-color: #111827;
+  color: #FFFFFF;
 }
 
 .role-chip {

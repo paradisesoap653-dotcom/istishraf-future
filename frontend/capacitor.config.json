@@ -3,7 +3,10 @@
   "appName": "استشراف",
   "webDir": "webroot",
   "bundledWebRuntime": false,
+  "appendUserAgent": "IstishrafNative",
   "server": {
+    "url": "https://istishraf-future.vercel.app",
+    "cleartext": false,
     "androidScheme": "https"
   }
 }

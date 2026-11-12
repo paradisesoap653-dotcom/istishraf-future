@@ -1,5 +1,5 @@
 <template>
-  <div class="pwa-install-wrapper">
+  <div v-if="!isNativeApp" class="pwa-install-wrapper">
     <button
       type="button"
       class="pwa-trigger-btn"
@@ -84,6 +84,7 @@ defineProps({
 const showModal = ref(false)
 const canDirectInstall = ref(false)
 const isStandalone = ref(false)
+const isNativeApp = ref(false)
 const copied = ref(false)
 const appUrl = ref('')
 
@@ -133,6 +134,12 @@ const copyUrl = async () => {
 
 onMounted(() => {
   appUrl.value = window.location.origin
+  if (
+    (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
+    navigator.userAgent.includes('IstishrafNative')
+  ) {
+    isNativeApp.value = true
+  }
   syncPromptState()
   window.addEventListener('mirofish-pwa-ready', syncPromptState)
   window.addEventListener('mirofish-pwa-installed', syncPromptState)
