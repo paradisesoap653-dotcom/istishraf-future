@@ -29,7 +29,7 @@ from ..utils.llm_client import LLMResponseError
 
 # 获取日志器
 logger = get_logger('mirofish.api')
-_build_locks: dict[str, threading.Lock] = {}
+_build_locks: dict[str, threading.RLock] = {}
 _build_locks_guard = threading.Lock()
 
 
@@ -108,9 +108,16 @@ def _clear_project_graph_reference(project) -> None:
     project.error = None
 
 
-def _project_build_lock(project_id: str) -> threading.Lock:
+def _project_build_lock(project_id: str) -> threading.RLock:
+    """Return the per-project build lock.
+
+    The lock must be re-entrant: the build path holds it while saving the
+    result or recording a failure, and those helpers acquire it again on the
+    same thread. A plain threading.Lock self-deadlocks there, which is the
+    hang observed on /api/graph/build in production.
+    """
     with _build_locks_guard:
-        return _build_locks.setdefault(project_id, threading.Lock())
+        return _build_locks.setdefault(project_id, threading.RLock())
 
 
 def _project_has_active_build(project) -> bool:
