@@ -109,20 +109,29 @@ class FileParser:
     
     @staticmethod
     def _extract_from_pdf(file_path: str) -> str:
-        """从PDF提取文本"""
+        """从PDF提取文本（优先使用PyMuPDF，Serverless环境下自动回退至纯Python pypdf）"""
+        text_parts = []
         try:
             import fitz  # PyMuPDF
+            with fitz.open(file_path) as doc:
+                for page in doc:
+                    text = page.get_text()
+                    if text.strip():
+                        text_parts.append(text)
+            return "\n\n".join(text_parts)
         except ImportError:
-            raise ImportError("需要安装PyMuPDF: pip install PyMuPDF")
-        
-        text_parts = []
-        with fitz.open(file_path) as doc:
-            for page in doc:
-                text = page.get_text()
+            pass
+
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            for page in reader.pages:
+                text = page.extract_text() or ""
                 if text.strip():
                     text_parts.append(text)
-        
-        return "\n\n".join(text_parts)
+            return "\n\n".join(text_parts)
+        except ImportError:
+            raise ImportError("يرجى تثبيت مكتبة pypdf أو PyMuPDF لقراءة ملفات PDF")
     
     @staticmethod
     def _extract_from_md(file_path: str) -> str:

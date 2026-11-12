@@ -152,6 +152,27 @@ def seed_arabic_demo_if_missing() -> None:
     with open(os.path.join(sim_dir, "run_state.json"), "w", encoding="utf-8") as f:
         json.dump({"simulation_id": sim_id, "runner_status": "completed", "current_round": 24, "total_rounds": 24, "simulated_hours": 24, "total_simulation_hours": 48, "twitter_running": False, "reddit_running": False, "twitter_actions_count": 68, "reddit_actions_count": 54, "total_actions_count": 122, "started_at": "2026-11-12T08:35:00", "completed_at": "2026-11-12T08:55:00"}, f, ensure_ascii=False, indent=2)
 
+    from ..services.serverless_sim import write_simulation_artifacts
+    demo_rounds = [
+        {
+            "round": 1,
+            "actions": [
+                {"agent_id": 5, "platform": "both", "action_type": "CREATE_POST", "content": "عاجل: الإعلان عن مبادرة النقل الذكي 2027.. حافلات كهربائية كل 6 دقائق ومنحة 35% للطاقة الشمسية المنزلية مقابل تعرفة مرنة بساعات الذروة. ما رأيكم؟", "likes": 48, "shares": 19},
+                {"agent_id": 0, "platform": "both", "action_type": "CREATE_POST", "content": "الأرقام الأولية مبشّرة اقتصادياً، لكن نجاح تعرفة الذروة يتطلب تشغيل الحافلات الترددية بكامل طاقتها لمدة 90 يوماً مجاناً قبل فرض أي رسوم.", "likes": 34, "shares": 12},
+                {"agent_id": 2, "platform": "both", "action_type": "CREATE_COMMENT", "content": "أتفق تماماً.. كموظفة أتنقل يومياً، أحتاج للتأكد من التزام الحافلات بالمواعيد وتوفر مواقف مجانية عند المحطات قبل ترك سيارتي.", "likes": 29, "shares": 4},
+            ],
+        },
+        {
+            "round": 2,
+            "actions": [
+                {"agent_id": 1, "platform": "both", "action_type": "CREATE_POST", "content": "منحة الـ 35% للألواح الشمسية المنزلية تخفّض فترة استرداد التكلفة إلى 3.4 سنوات فقط! خطوة تاريخية لدعم الأسر وشحن المركبات الكهربائية.", "likes": 62, "shares": 27},
+                {"agent_id": 4, "platform": "both", "action_type": "CREATE_POST", "content": "نرحب بالمبادرة ونطالب بإعفاء أساطيل التوصيل الكهربائية التجارية كلياً من رسوم الذروة حتى لا ترتفع تكلفة التوصيل على المستهلكين والمتاجر.", "likes": 41, "shares": 15},
+                {"agent_id": 3, "platform": "both", "action_type": "CREATE_COMMENT", "content": "نقطة جوهرية لأصحاب المتاجر بوسط المدينة؛ إعفاء مركبات التوريد الكهربائية وتخصيص نوافذ تفريغ مسائية سيحمي الحركة التجارية.", "likes": 23, "shares": 6},
+            ],
+        },
+    ]
+    write_simulation_artifacts(sim_dir, [p.to_reddit_format() for p in profiles_data], demo_rounds, ["twitter", "reddit"])
+
     sec1_title = "1. الملخص التنفيذي واتجاهات الرأي العام"
     sec1_body = f"## {sec1_title}\n\nأظهرت المحاكاة المتوازية على مدار **24 جولة زمنية** تأييداً مشروطاً بنسبة **68%** مقابل تحفّظ عملي بنسبة **32%**، حيث حصدت منحة الـ **35% للطاقة الشمسية المنزلية** قبولاً بنسبة **84%** بينما تركزت التحفظات حول توقيت بدء تعرفة الذروة.\n\n"
     sec2_title = "2. تحليل مواقف الشرائح الفاعلة خلال المحاكاة"

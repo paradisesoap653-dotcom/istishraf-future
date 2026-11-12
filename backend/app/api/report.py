@@ -292,8 +292,11 @@ def generate_report():
                     unregister_graph_reader(graph_id, report_id)
 
             try:
-                thread = threading.Thread(target=run_generate, daemon=True)
-                thread.start()
+                if Config.IS_SERVERLESS:
+                    run_generate()
+                else:
+                    thread = threading.Thread(target=run_generate, daemon=True)
+                    thread.start()
             except Exception:
                 unregister_graph_reader(graph_id, report_id)
                 raise

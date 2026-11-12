@@ -213,10 +213,7 @@ class SimulationRunner:
     """
     
     # 运行状态存储目录
-    RUN_STATE_DIR = os.path.join(
-        os.path.dirname(__file__),
-        '../../uploads/simulations'
-    )
+    RUN_STATE_DIR = Config.OASIS_SIMULATION_DATA_DIR
     
     # 脚本目录
     SCRIPTS_DIR = os.path.join(
@@ -462,6 +459,69 @@ class SimulationRunner:
         else:
             cls._graph_memory_enabled[simulation_id] = False
         
+        import importlib.util
+        use_serverless_engine = Config.IS_SERVERLESS or (importlib.util.find_spec("oasis") is None)
+        if use_serverless_engine:
+            from .serverless_sim import run_serverless_simulation
+
+            def _exec_lightweight():
+                try:
+                    state.runner_status = RunnerStatus.RUNNING
+                    state.twitter_running = platform in ("twitter", "parallel")
+                    state.reddit_running = platform in ("reddit", "parallel")
+                    cls._save_run_state(state)
+                    cls._sync_simulation_status(simulation_id, RunnerStatus.RUNNING)
+
+                    summary = run_serverless_simulation(
+                        sim_dir=sim_dir,
+                        platform=platform,
+                        max_rounds=max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS,
+                    )
+                    done_rounds = summary.get("rounds_completed", 3)
+                    state.current_round = done_rounds
+                    state.total_rounds = done_rounds
+                    state.simulated_hours = done_rounds
+                    state.twitter_current_round = done_rounds
+                    state.reddit_current_round = done_rounds
+                    state.twitter_actions_count = summary.get("twitter_actions", 0)
+                    state.reddit_actions_count = summary.get("reddit_actions", 0)
+                    state.total_actions_count = summary.get("total_actions", 0)
+                    state.twitter_running = False
+                    state.reddit_running = False
+                    state.runner_status = RunnerStatus.COMPLETED
+                    state.completed_at = datetime.now().isoformat()
+                    if cls._graph_memory_enabled.get(simulation_id, False):
+                        try:
+                            ZepGraphMemoryManager.stop_updater(simulation_id)
+                        except Exception:
+                            pass
+                        cls._graph_memory_enabled.pop(simulation_id, None)
+                    with cls._finalization_lock(simulation_id):
+                        cls._save_run_state(state)
+                        cls._sync_simulation_status(simulation_id, RunnerStatus.COMPLETED)
+                except Exception as sim_err:
+                    logger.error(f"Serverless simulation error: {sim_err}")
+                    state.runner_status = RunnerStatus.FAILED
+                    state.twitter_running = False
+                    state.reddit_running = False
+                    state.error = str(sim_err)
+                    if cls._graph_memory_enabled.get(simulation_id, False):
+                        try:
+                            ZepGraphMemoryManager.stop_updater(simulation_id)
+                        except Exception:
+                            pass
+                        cls._graph_memory_enabled.pop(simulation_id, None)
+                    with cls._finalization_lock(simulation_id):
+                        cls._save_run_state(state)
+                        cls._sync_simulation_status(simulation_id, RunnerStatus.FAILED, state.error)
+
+            if Config.IS_SERVERLESS:
+                _exec_lightweight()
+            else:
+                t_worker = threading.Thread(target=_exec_lightweight, daemon=True)
+                t_worker.start()
+            return state
+
         # 确定运行哪个脚本（脚本位于 backend/scripts/ 目录）
         if platform == "twitter":
             script_name = "run_twitter_simulation.py"

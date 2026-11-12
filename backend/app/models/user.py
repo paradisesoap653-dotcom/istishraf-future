@@ -95,7 +95,10 @@ class UserStore:
 
                 total_Row = conn.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()
                 is_first_user = (int(total_Row["cnt"]) == 0)
-                is_admin = is_first_user or (admin_email_env and clean_email == admin_email_env)
+                if admin_email_env:
+                    is_admin = (clean_email == admin_email_env)
+                else:
+                    is_admin = is_first_user
 
                 role = "admin" if is_admin else "user"
                 quota = 999 if is_admin else int(os.environ.get("DEFAULT_USER_DAILY_QUOTA", "5"))
@@ -220,7 +223,14 @@ def _serializer() -> URLSafeTimedSerializer:
 
 
 def issue_auth_token(user: Dict[str, Any]) -> str:
-    return _serializer().dumps({"uid": user["id"], "role": user["role"]})
+    return _serializer().dumps({
+        "uid": user["id"],
+        "name": user.get("name", ""),
+        "email": user.get("email", ""),
+        "role": user["role"],
+        "daily_quota": user.get("daily_quota", 5),
+        "created_at": user.get("created_at", ""),
+    })
 
 
 def verify_auth_token(token: str) -> Optional[Dict[str, Any]]:
@@ -231,7 +241,20 @@ def verify_auth_token(token: str) -> Optional[Dict[str, Any]]:
         uid = payload.get("uid")
         if not uid:
             return None
-        return UserStore.get_user_by_id(int(uid))
+        db_user = UserStore.get_user_by_id(int(uid))
+        if db_user:
+            return db_user
+        # Serverless cold-start fallback: trust cryptographically signed token claims
+        if payload.get("email") and payload.get("role"):
+            return {
+                "id": int(uid),
+                "name": payload.get("name") or "مستخدم",
+                "email": payload.get("email"),
+                "role": payload.get("role"),
+                "daily_quota": int(payload.get("daily_quota", 5)),
+                "created_at": payload.get("created_at") or "",
+            }
+        return None
     except (BadSignature, SignatureExpired, ValueError, TypeError):
         return None
 

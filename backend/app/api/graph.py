@@ -834,9 +834,12 @@ def _build_graph_impl():
                         error=traceback.format_exc()
                     )
         
-        # 启动后台线程
-        thread = threading.Thread(target=build_task, daemon=True)
-        thread.start()
+        # 启动后台线程（在 Vercel Serverless 环境中同步执行，避免函数返回后后台线程被冻结）
+        if Config.IS_SERVERLESS:
+            build_task()
+        else:
+            thread = threading.Thread(target=build_task, daemon=True)
+            thread.start()
         
         return jsonify({
             "success": True,

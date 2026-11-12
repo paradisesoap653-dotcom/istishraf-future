@@ -1,0 +1,11 @@
+frontend/android
+frontend/node_modules
+backend/.venv
+backend/uploads
+backend/logs
+backend/tests
+tests
+static
+.git
+.github
+android-workflow

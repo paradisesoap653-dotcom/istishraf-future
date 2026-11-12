@@ -23,8 +23,9 @@ def _ensure_utf8_stdout():
             sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
 
-# 日志目录
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
+# 日志目录（在Vercel/Serverless只读文件系统中自动切换到 /tmp/istishraf_logs）
+_IS_SERVERLESS_LOG = bool(os.environ.get('VERCEL') or os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+LOG_DIR = '/tmp/istishraf_logs' if _IS_SERVERLESS_LOG else os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
 
 
 def setup_logger(name: str = 'mirofish', level: int = logging.DEBUG) -> logging.Logger:

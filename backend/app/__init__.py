@@ -138,15 +138,18 @@ def create_app(config_class=Config):
             Config.ZEP_API_KEY = zep_key
             os.environ['ZEP_API_KEY'] = zep_key
 
-        env_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env'))
+        env_path = '/tmp/.env' if Config.IS_SERVERLESS else os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env'))
         lines = [
             f"LLM_API_KEY={Config.LLM_API_KEY or ''}",
             f"LLM_BASE_URL={Config.LLM_BASE_URL or 'https://api.openai.com/v1'}",
             f"LLM_MODEL_NAME={Config.LLM_MODEL_NAME or 'gpt-4o-mini'}",
             f"ZEP_API_KEY={Config.ZEP_API_KEY or ''}",
         ]
-        with open(env_path, 'w', encoding='utf-8') as env_file:
-            env_file.write('\n'.join(lines) + '\n')
+        try:
+            with open(env_path, 'w', encoding='utf-8') as env_file:
+                env_file.write('\n'.join(lines) + '\n')
+        except OSError as env_err:
+            logger.warning(f"Skipping .env write on read-only fs: {env_err}")
 
         has_llm = bool(Config.LLM_API_KEY and Config.LLM_API_KEY.strip())
         has_zep = bool(Config.ZEP_API_KEY and Config.ZEP_API_KEY.strip())

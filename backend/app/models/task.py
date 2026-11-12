@@ -3,6 +3,8 @@
 用于跟踪长时间运行的任务（如图谱构建）
 """
 
+import os
+import json
 import uuid
 import threading
 from datetime import datetime
@@ -10,6 +12,7 @@ from enum import Enum
 from typing import Dict, Any, Optional
 from dataclasses import dataclass, field
 
+from ..config import Config
 from ..utils.locale import t
 
 
@@ -97,13 +100,52 @@ class TaskManager:
         
         with self._task_lock:
             self._tasks[task_id] = task
+            self._persist_task(task)
         
         return task_id
     
+    @staticmethod
+    def _task_file(task_id: str) -> str:
+        tasks_dir = os.path.join(Config.UPLOAD_FOLDER, 'tasks')
+        os.makedirs(tasks_dir, exist_ok=True)
+        return os.path.join(tasks_dir, f"{task_id}.json")
+
+    def _persist_task(self, task: Task) -> None:
+        try:
+            with open(self._task_file(task.task_id), 'w', encoding='utf-8') as f:
+                json.dump(task.to_dict(), f, ensure_ascii=False)
+        except Exception:
+            pass
+
     def get_task(self, task_id: str) -> Optional[Task]:
         """获取任务"""
         with self._task_lock:
-            return self._tasks.get(task_id)
+            task = self._tasks.get(task_id)
+            if task:
+                return task
+            fpath = self._task_file(task_id)
+            if os.path.exists(fpath):
+                try:
+                    with open(fpath, 'r', encoding='utf-8') as f:
+                        d = json.load(f)
+                    restored = Task(
+                        task_id=d["task_id"],
+                        task_type=d.get("task_type", ""),
+                        status=TaskStatus(d.get("status", "pending")),
+                        created_at=datetime.fromisoformat(d["created_at"]),
+                        updated_at=datetime.fromisoformat(d["updated_at"]),
+                        progress=d.get("progress", 0),
+                        message=d.get("message", ""),
+                        result=d.get("result"),
+                        error=d.get("error"),
+                        metadata=d.get("metadata") or {},
+                        progress_detail=d.get("progress_detail") or {},
+                    )
+                    self._tasks[task_id] = restored
+                    return restored
+                except Exception:
+                    return None
+            return None
     
     def update_task(
         self,
@@ -143,6 +185,7 @@ class TaskManager:
                     task.error = error
                 if progress_detail is not None:
                     task.progress_detail = progress_detail
+                self._persist_task(task)
     
     def complete_task(self, task_id: str, result: Dict):
         """标记任务完成"""

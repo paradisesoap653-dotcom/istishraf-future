@@ -6,16 +6,24 @@ from dotenv import load_dotenv
 # 加载项目根目录的 .env 文件
 # 路径: MiroFish/.env (相对于 backend/app/config.py)
 project_root_env = os.path.join(os.path.dirname(__file__), '../../.env')
+serverless_tmp_env = '/tmp/.env'
 
 if os.path.exists(project_root_env):
     load_dotenv(project_root_env, override=True)
+elif os.path.exists(serverless_tmp_env):
+    load_dotenv(serverless_tmp_env, override=True)
 else:
     # 如果根目录没有 .env，尝试加载环境变量（用于生产环境）
     load_dotenv(override=True)
 
+_IS_SERVERLESS = bool(os.environ.get('VERCEL') or os.environ.get('AWS_LAMBDA_FUNCTION_NAME'))
+_DEFAULT_UPLOAD_DIR = '/tmp/istishraf_uploads' if _IS_SERVERLESS else os.path.join(os.path.dirname(__file__), '../uploads')
+
 
 class Config:
     """Flask配置类"""
+    
+    IS_SERVERLESS = _IS_SERVERLESS
     
     # Flask配置
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mirofish-secret-key')
@@ -34,7 +42,7 @@ class Config:
     
     # 文件上传配置
     MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB
-    UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '../uploads')
+    UPLOAD_FOLDER = os.environ.get('ISTISHRAF_UPLOAD_DIR', _DEFAULT_UPLOAD_DIR)
     ALLOWED_EXTENSIONS = {'pdf', 'md', 'txt', 'markdown'}
     
     # 文本处理配置
@@ -42,8 +50,8 @@ class Config:
     DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
     
     # OASIS模拟配置
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '10'))
-    OASIS_SIMULATION_DATA_DIR = os.path.join(os.path.dirname(__file__), '../uploads/simulations')
+    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '3' if _IS_SERVERLESS else '10'))
+    OASIS_SIMULATION_DATA_DIR = os.path.join(UPLOAD_FOLDER, 'simulations')
     
     # OASIS平台可用动作配置
     OASIS_TWITTER_ACTIONS = [
@@ -56,8 +64,8 @@ class Config:
     ]
     
     # Report Agent配置
-    REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '5'))
-    REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '2'))
+    REPORT_AGENT_MAX_TOOL_CALLS = int(os.environ.get('REPORT_AGENT_MAX_TOOL_CALLS', '2' if _IS_SERVERLESS else '5'))
+    REPORT_AGENT_MAX_REFLECTION_ROUNDS = int(os.environ.get('REPORT_AGENT_MAX_REFLECTION_ROUNDS', '0' if _IS_SERVERLESS else '2'))
     REPORT_AGENT_TEMPERATURE = float(os.environ.get('REPORT_AGENT_TEMPERATURE', '0.5'))
     
     @classmethod
