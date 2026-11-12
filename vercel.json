@@ -23,5 +23,11 @@
       "source": "/(.*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/worker/tick?budget=45",
+      "schedule": "0 3 * * *"
+    }
   ]
 }

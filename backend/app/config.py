@@ -53,6 +53,9 @@ class Config:
     # ISTISHRAF_INLINE_TASKS=1 يعيد السلوك القديم (تنفيذ داخل الطلب).
     INLINE_LONG_TASKS = os.environ.get('ISTISHRAF_INLINE_TASKS', '').lower() in ('1', 'true', 'yes')
     JOB_LEASE_SECONDS = int(os.environ.get('ISTISHRAF_JOB_LEASE_SECONDS', '600'))
+    # رمز حماية مسار /api/worker/tick (يُقبل أيضًا CRON_SECRET الذي يضيفه Vercel)
+    WORKER_TOKEN = (os.environ.get('ISTISHRAF_WORKER_TOKEN') or os.environ.get('CRON_SECRET') or '').strip()
+    WORKER_TICK_BUDGET = float(os.environ.get('ISTISHRAF_WORKER_TICK_BUDGET', '240'))
     JOB_POLL_SECONDS = float(os.environ.get('ISTISHRAF_JOB_POLL_SECONDS', '3'))
     
     # 文件上传配置

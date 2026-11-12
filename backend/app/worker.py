@@ -146,12 +146,27 @@ def run_forever(
     poll_seconds: Optional[float] = None,
     once: bool = False,
     reclaim_interval: int = 60,
+    max_seconds: Optional[float] = None,
+    drain: bool = False,
+    app=None,
 ) -> None:
+    """حلقة العمل.
+
+    ``once``     : مهمة واحدة ثم خروج.
+    ``drain``    : امضِ في سحب المهام حتى تفرغ أو ينتهي الوقت (نمط cron/CI).
+    ``max_seconds``: سقف زمني للعملية كلها — لا نبدأ مهمة جديدة بعده.
+    """
     lease_seconds = lease_seconds or Config.JOB_LEASE_SECONDS
     poll_seconds = poll_seconds or Config.JOB_POLL_SECONDS
 
-    app = create_app()
+    if app is None:
+        app = create_app()
     worker_id = f"{socket.gethostname()}-{threading.current_thread().name}"
+    started_at = time.monotonic()
+    processed = 0
+
+    def _out_of_time() -> bool:
+        return max_seconds is not None and (time.monotonic() - started_at) >= max_seconds
 
     with app.app_context():
         if not storage.is_durable():
@@ -179,18 +194,23 @@ def run_forever(
                     logger.error("تعذر استعادة المهام المنتهية: %s", exc)
                 last_reclaim = now
 
+            if _out_of_time():
+                logger.warning("انتهى السقف الزمني (%.0fث) — توقف", max_seconds)
+                break
+
             job = job_queue.claim(worker_id, kinds, lease_seconds)
             if job is None:
-                if once:
+                if once or drain:
                     break
                 _stop_event.wait(poll_seconds)
                 continue
 
             execute_job(job, lease_seconds)
+            processed += 1
             if once:
                 break
 
-        logger.info("العامل %s توقّف", worker_id)
+        logger.info("العامل %s توقّف بعد %s مهمة", worker_id, processed)
 
 
 def _install_signal_handlers() -> None:
@@ -211,6 +231,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--lease", type=int, default=None, help="مدة التأجير بالثواني")
     parser.add_argument("--poll", type=float, default=None, help="فاصل الاستعلام بالثواني")
     parser.add_argument("--once", action="store_true", help="نفّذ مهمة واحدة ثم اخرج")
+    parser.add_argument("--drain", action="store_true", help="اسحب المهام حتى تفرغ أو ينتهي الوقت (نمط cron)")
+    parser.add_argument("--max-seconds", type=float, default=None, help="سقف زمني للعملية بالثواني")
     parser.add_argument("--purge", action="store_true", help="احذف المهام المنتهية القديمة ثم اخرج")
     args = parser.parse_args(argv)
 
@@ -221,7 +243,14 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     kinds = [k.strip() for k in args.kinds.split(",") if k.strip()] or None
     _install_signal_handlers()
-    run_forever(kinds=kinds, lease_seconds=args.lease, poll_seconds=args.poll, once=args.once)
+    run_forever(
+        kinds=kinds,
+        lease_seconds=args.lease,
+        poll_seconds=args.poll,
+        once=args.once,
+        max_seconds=args.max_seconds,
+        drain=args.drain,
+    )
     return 0
 
 

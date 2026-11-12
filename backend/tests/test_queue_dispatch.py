@@ -201,3 +201,52 @@ class _FakeThread:
 
     def start(self):
         self.target(*self.args, **self.kwargs)
+
+
+# --------------------------------------------------------------------------
+# مسار العامل عند الطلب (Vercel Cron / GitHub Actions / cron خارجي)
+# --------------------------------------------------------------------------
+
+def test_worker_tick_is_disabled_without_a_token(monkeypatch):
+    from app import create_app
+
+    monkeypatch.setattr(graph_api.Config, "WORKER_TOKEN", "", raising=False)
+    client = create_app().test_client()
+
+    response = client.post("/api/worker/tick")
+    assert response.status_code == 503
+    assert "معط" in response.get_json()["error"]
+
+
+def test_worker_tick_rejects_a_wrong_token(monkeypatch):
+    from app import create_app
+
+    monkeypatch.setattr(graph_api.Config, "WORKER_TOKEN", "s3cret", raising=False)
+    client = create_app().test_client()
+
+    assert client.post("/api/worker/tick", headers={"X-Worker-Token": "nope"}).status_code == 401
+    assert client.post("/api/worker/tick").status_code == 401
+
+
+def test_worker_tick_drains_a_job_with_the_shared_secret(monkeypatch):
+    from app import create_app
+    from app import worker as worker_module
+
+    monkeypatch.setattr(graph_api.Config, "WORKER_TOKEN", "s3cret", raising=False)
+    done = []
+    monkeypatch.setitem(worker_module.HANDLERS, "graph_build", lambda payload, ctx: done.append(payload))
+
+    job_id = job_queue.enqueue("graph_build", {"task_id": "tick-1"}, task_id="tick-1")
+    client = create_app().test_client()
+
+    response = client.post(
+        "/api/worker/tick", headers={"X-Worker-Token": "s3cret"}, query_string={"budget": "10"}
+    )
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["data"]["queue"]["pending"] == 0
+    assert job_queue.get(job_id)["status"] == "succeeded"
+    assert done == [{"task_id": "tick-1"}]
+
+    # Vercel Cron يرسل CRON_SECRET كـ Bearer
+    cron = client.get("/api/worker/tick", headers={"Authorization": "Bearer s3cret"})
+    assert cron.status_code == 200
