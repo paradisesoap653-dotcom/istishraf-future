@@ -47,10 +47,18 @@ class _SqliteUserStore:
                         password_hash TEXT NOT NULL,
                         role TEXT NOT NULL DEFAULT 'user',
                         daily_quota INTEGER NOT NULL DEFAULT 5,
-                        created_at TEXT NOT NULL
+                        created_at TEXT NOT NULL,
+                        is_active INTEGER NOT NULL DEFAULT 1
                     )
                     """
                 )
+                # ترقية قواعد قائمة أُنشئت قبل إضافة عمود الإيقاف
+                try:
+                    conn.execute(
+                        "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
+                    )
+                except sqlite3.OperationalError:
+                    pass
                 conn.execute(
                     """
                     CREATE TABLE IF NOT EXISTS resource_owners (
@@ -137,6 +145,11 @@ class _SqliteUserStore:
                 return None
             if not check_password_hash(row["password_hash"], password or ""):
                 return None
+            active = True
+            if "is_active" in row.keys():
+                active = bool(row["is_active"])
+            if not active:
+                raise PermissionError("inactive_account")
             return {
                 "id": row["id"],
                 "name": row["name"],
@@ -144,6 +157,7 @@ class _SqliteUserStore:
                 "role": row["role"],
                 "daily_quota": row["daily_quota"],
                 "created_at": row["created_at"],
+                "is_active": active,
             }
 
     @classmethod
@@ -151,19 +165,21 @@ class _SqliteUserStore:
         cls.init_db()
         with cls._conn() as conn:
             row = conn.execute(
-                "SELECT id, name, email, role, daily_quota, created_at FROM users WHERE id = ?",
+                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users WHERE id = ?",
                 (user_id,),
             ).fetchone()
             if not row:
                 return None
-            return dict(row)
+            data = dict(row)
+            data["is_active"] = bool(data.get("is_active", 1))
+            return data
 
     @classmethod
     def list_users(cls) -> List[Dict[str, Any]]:
         cls.init_db()
         with cls._conn() as conn:
             rows = conn.execute(
-                "SELECT id, name, email, role, daily_quota, created_at FROM users ORDER BY id DESC"
+                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users ORDER BY id DESC"
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -257,9 +273,12 @@ class _PgUserStore:
             password_hash TEXT NOT NULL,
             role TEXT NOT NULL DEFAULT 'user',
             daily_quota INTEGER NOT NULL DEFAULT 5,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE
         )
         """,
+        # ترقية قواعد قائمة أُنشئت قبل إضافة عمود الإيقاف
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
         """
         CREATE TABLE IF NOT EXISTS resource_owners (
             resource_type TEXT NOT NULL,
@@ -341,7 +360,7 @@ class _PgUserStore:
         clean_email = (email or "").strip().lower()
         with cls._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, email, password_hash, role, daily_quota, created_at "
+                "SELECT id, name, email, password_hash, role, daily_quota, created_at, is_active "
                 "FROM users WHERE email = %s",
                 (clean_email,),
             )
@@ -350,6 +369,9 @@ class _PgUserStore:
             return None
         if not check_password_hash(row[3], password or ""):
             return None
+        active = True if len(row) < 8 or row[7] is None else bool(row[7])
+        if not active:
+            raise PermissionError("inactive_account")
         return {
             "id": int(row[0]),
             "name": row[1],
@@ -357,13 +379,14 @@ class _PgUserStore:
             "role": row[4],
             "daily_quota": int(row[5]),
             "created_at": row[6],
+            "is_active": active,
         }
 
     @classmethod
     def get_user_by_id(cls, user_id: int) -> Optional[Dict[str, Any]]:
         with cls._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, email, role, daily_quota, created_at FROM users WHERE id = %s",
+                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users WHERE id = %s",
                 (int(user_id),),
             )
             row = cur.fetchone()
@@ -376,13 +399,14 @@ class _PgUserStore:
             "role": row[3],
             "daily_quota": int(row[4]),
             "created_at": row[5],
+            "is_active": bool(row[6]) if len(row) > 6 and row[6] is not None else True,
         }
 
     @classmethod
     def list_users(cls) -> List[Dict[str, Any]]:
         with cls._conn() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, email, role, daily_quota, created_at FROM users ORDER BY id DESC"
+                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
         return [
@@ -393,6 +417,7 @@ class _PgUserStore:
                 "role": r[3],
                 "daily_quota": int(r[4]),
                 "created_at": r[5],
+                "is_active": bool(r[6]) if len(r) > 6 and r[6] is not None else True,
             }
             for r in rows
         ]
@@ -503,10 +528,37 @@ def verify_auth_token(token: str) -> Optional[Dict[str, Any]]:
 
 def get_current_user() -> Optional[Dict[str, Any]]:
     auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        return verify_auth_token(token)
-    return None
+    if not auth_header.startswith("Bearer "):
+        return None
+
+    token = auth_header[7:].strip()
+    payload = verify_auth_token(token)
+    if not payload:
+        return None
+
+    # ``verify_auth_token`` يعيد سجل المستخدم من القاعدة حين يكون موجودًا،
+    # ونعيد القراءة فقط إذا جاء من مسار لا يقرأ القاعدة.
+    if payload.get("is_active") is not None:
+        fresh = payload
+    else:
+        raw_uid = payload.get("uid") or payload.get("id")
+        try:
+            fresh = UserStore.get_user_by_id(int(raw_uid)) if raw_uid else None
+        except Exception:
+            fresh = None
+
+    if not fresh:
+        return None
+    # حساب موقوف أو محذوف لا يبقى فعّالًا بتوكن قديم
+    if fresh.get("is_active") is False:
+        return None
+
+    merged = dict(payload)
+    merged["id"] = fresh.get("id") or fresh.get("uid")
+    for key in ("name", "email", "role", "daily_quota"):
+        if fresh.get(key) is not None:
+            merged[key] = fresh[key]
+    return merged
 
 
 def _inherited_owner_id(resource_type: str, resource_id: str) -> Optional[int]:
@@ -528,3 +580,60 @@ def _inherited_owner_id(resource_type: str, resource_id: str) -> Optional[int]:
         return int(owner) if owner is not None else None
     except Exception:
         return None
+
+
+# ---------------------------------------------------------------------------
+# عمليات إدارة المستخدمين (للمدير فقط). تعمل مع PostgreSQL أو SQLite حسب البيئة.
+# ---------------------------------------------------------------------------
+
+def _admin_exec(sql_pg: str, sql_lite: str, params: tuple) -> int:
+    """نفّذ أمرًا إداريًا وأعد عدد الصفوف المتأثرة."""
+    if storage.is_durable():
+        with _db_lock, _PgUserStore._conn() as conn, conn.cursor() as cur:
+            cur.execute(sql_pg, params)
+            return int(cur.rowcount or 0)
+    _SqliteUserStore.init_db()
+    with _db_lock:
+        with _SqliteUserStore._conn() as conn:
+            cur = conn.execute(sql_lite, params)
+            conn.commit()
+            return int(cur.rowcount or 0)
+
+
+def admin_set_active(user_id: int, active: bool) -> bool:
+    affected = _admin_exec(
+        "UPDATE users SET is_active = %s WHERE id = %s",
+        "UPDATE users SET is_active = ? WHERE id = ?",
+        (bool(active), int(user_id)) if storage.is_durable() else (1 if active else 0, int(user_id)),
+    )
+    return affected > 0
+
+
+def admin_set_quota(user_id: int, daily_quota: int) -> bool:
+    affected = _admin_exec(
+        "UPDATE users SET daily_quota = %s WHERE id = %s",
+        "UPDATE users SET daily_quota = ? WHERE id = ?",
+        (int(daily_quota), int(user_id)),
+    )
+    return affected > 0
+
+
+def admin_delete_user(user_id: int) -> bool:
+    """حذف الحساب مع إبقاء موارده (تبقى ظاهرة للمدير فقط)."""
+    affected = _admin_exec(
+        "DELETE FROM users WHERE id = %s",
+        "DELETE FROM users WHERE id = ?",
+        (int(user_id),),
+    )
+    return affected > 0
+
+
+def admin_count_admins() -> int:
+    if storage.is_durable():
+        with _PgUserStore._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+            return int(cur.fetchone()[0])
+    _SqliteUserStore.init_db()
+    with _SqliteUserStore._conn() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()
+        return int(row[0]) if row else 0

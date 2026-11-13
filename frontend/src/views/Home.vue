@@ -8,6 +8,7 @@
       </div>
       <div class="nav-links">
         <AuthModal :dark="true" />
+        <AdminUsersModal :dark="true" />
         <ThemeToggle />
         <PwaInstallButton :dark="true" />
         <ApiSettingsModal :dark="true" />
@@ -238,6 +239,7 @@ import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 import PwaInstallButton from '../components/PwaInstallButton.vue'
 import ApiSettingsModal from '../components/ApiSettingsModal.vue'
 import AuthModal from '../components/AuthModal.vue'
+import AdminUsersModal from '../components/AdminUsersModal.vue'
 import ThemeToggle from '../components/ThemeToggle.vue'
 import { authState, openAuthModal } from '../store/auth'
 
