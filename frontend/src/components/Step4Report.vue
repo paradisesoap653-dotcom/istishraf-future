@@ -66,7 +66,14 @@
         </div>
 
         <!-- Waiting State -->
-        <div v-if="!reportOutline" class="waiting-placeholder">
+        <div v-if="!reportOutline && reportError" class="waiting-placeholder" dir="rtl">
+          <div class="report-error-box">
+            <strong>تعذّر توليد التقرير</strong>
+            <span class="report-error-text">{{ reportError }}</span>
+            <span class="report-error-hint">يمكنك الضغط على «توليد التقرير» مرة أخرى من صفحة المحاكاة.</span>
+          </div>
+        </div>
+        <div v-else-if="!reportOutline" class="waiting-placeholder">
           <div class="waiting-animation">
             <div class="waiting-ring"></div>
             <div class="waiting-ring"></div>
@@ -393,7 +400,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportProgress } from '../api/report'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -2019,6 +2026,7 @@ const getLogLevelClass = (log) => {
 
 // Polling
 let agentLogTimer = null
+let reportProgressTimer = null
 let consoleLogTimer = null
 
 const fetchAgentLog = async () => {
@@ -2129,6 +2137,24 @@ const extractFinalContent = (response) => {
   return null
 }
 
+const reportError = ref('')
+
+const checkReportProgress = async () => {
+  if (!props.reportId) return
+  try {
+    const res = await getReportProgress(props.reportId)
+    const data = res && res.success ? res.data : null
+    if (!data) return
+    if (data.status === 'failed') {
+      reportError.value = data.message || 'فشل توليد التقرير.'
+    } else if (data.status === 'completed' || data.status === 'success') {
+      reportError.value = ''
+    }
+  } catch (err) {
+    console.warn('تعذر قراءة تقدم التقرير:', err)
+  }
+}
+
 const fetchConsoleLog = async () => {
   if (!props.reportId) return
   
@@ -2162,6 +2188,8 @@ const startPolling = () => {
   
   agentLogTimer = setInterval(fetchAgentLog, 2000)
   consoleLogTimer = setInterval(fetchConsoleLog, 1500)
+  checkReportProgress()
+  reportProgressTimer = setInterval(checkReportProgress, 4000)
 }
 
 const stopPolling = () => {
@@ -2172,6 +2200,10 @@ const stopPolling = () => {
   if (consoleLogTimer) {
     clearInterval(consoleLogTimer)
     consoleLogTimer = null
+  }
+  if (reportProgressTimer) {
+    clearInterval(reportProgressTimer)
+    reportProgressTimer = null
   }
 }
 
@@ -2622,6 +2654,21 @@ watch(() => props.reportId, (newId) => {
 }
 
 /* Waiting Placeholder */
+.report-error-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 460px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 67, 54, .35);
+  background: rgba(244, 67, 54, .07);
+  text-align: right;
+  line-height: 1.8;
+}
+.report-error-text { font-size: 13px; opacity: .9; word-break: break-word; }
+.report-error-hint { font-size: 12px; opacity: .7; }
+
 .waiting-placeholder {
   flex: 1;
   display: flex;

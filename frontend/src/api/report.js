@@ -49,3 +49,11 @@ export const getReport = (reportId) => {
 export const chatWithReport = (data) => {
   return service.post('/api/report/chat', data)
 }
+
+/**
+ * 获取报告生成进度（含失败原因）
+ * @param {string} reportId
+ */
+export const getReportProgress = (reportId) => {
+  return service.get(`/api/report/${reportId}/progress`)
+}

@@ -1299,7 +1299,11 @@ class ReportAgent:
             section_title=section.title,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
+        system_prompt = (
+            f"{system_prompt}\n\n{get_language_instruction()}\n"
+            "لا تستخدم واجهة الأدوات المدمجة في النموذج؛ اكتب أي استدعاء أداة "
+            "كنص عادي داخل وسم <tool_call>."
+        )
 
         # بناء طلب المستخدم: نمرّر ملخّصًا قصيرًا من الأقسام السابقة فقط، لأن
         # حدود المزوّد (TPM) صغيرة جدًا؛ تمرير كل الأقسام كان يرفع حجم الطلب
@@ -1851,7 +1855,11 @@ class ReportAgent:
             report_content=report_content if report_content else "（暂无报告）",
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
+        system_prompt = (
+            f"{system_prompt}\n\n{get_language_instruction()}\n"
+            "لا تستخدم واجهة الأدوات المدمجة في النموذج؛ اكتب أي استدعاء أداة "
+            "كنص عادي داخل وسم <tool_call>."
+        )
 
         # 构建消息
         messages = [{"role": "system", "content": system_prompt}]

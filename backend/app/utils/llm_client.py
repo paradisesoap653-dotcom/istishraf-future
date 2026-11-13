@@ -16,6 +16,15 @@ from .openai_chat_compat import create_chat_completion, extract_chat_completion_
 
 logger = logging.getLogger(__name__)
 
+# بعض النماذج (مثل gpt-oss على Groq) تنادي أداة مدمجة من تلقاء نفسها عندما ترى
+# وسومًا مثل <tool_call> في التعليمات، فيرفض المزوّد الطلب برسالة
+# "Tool choice is none, but model called a tool". هذه رسالة تذكير تُضاف عند الحدوث.
+TOOL_GUARD_MESSAGE = (
+    "تنبيه نظام: لا تستخدم واجهة الأدوات المدمجة ولا تُصدر أي tool_call. "
+    "استدعاء الأدوات هنا يُكتب كنص عادي داخل وسم <tool_call> ... </tool_call> فقط، "
+    "وأي رد منك يجب أن يكون نصًا عاديًا."
+)
+
 
 class LLMResponseError(ValueError):
     """A safe, structured error for unusable model responses."""
@@ -124,18 +133,32 @@ class LLMClient:
         # الدقيقة (TPM) ويرفضون الطلب بـ413/429. ننتظر انتهاء نافذة الدقيقة
         # ونعيد المحاولة بدل إسقاط التقرير كاملًا.
         attempts = 0
+        guard_messages: List[Dict[str, str]] = []
         while True:
             try:
                 return create_chat_completion(
                     self.client,
                     model=self.model,
-                    messages=messages,
+                    messages=[*messages, *guard_messages],
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format=response_format,
                 )
             except Exception as exc:  # noqa: BLE001 - نفحص نوع الخطأ من نصه
                 detail = str(exc)
+                tool_call_conflict = (
+                    "called a tool" in detail
+                    or "tool_choice" in detail
+                    or "tool call" in detail.lower()
+                )
+                if tool_call_conflict and attempts < 2:
+                    attempts += 1
+                    logger.warning(
+                        "النموذج نادى أداة مدمجة رغم عدم تمرير أدوات؛ إعادة المحاولة مع تذكير (%s)",
+                        attempts,
+                    )
+                    guard_messages = [{"role": "system", "content": TOOL_GUARD_MESSAGE}]
+                    continue
                 limited = any(
                     token in detail
                     for token in (
