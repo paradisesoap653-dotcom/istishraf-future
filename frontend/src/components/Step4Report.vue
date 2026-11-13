@@ -400,7 +400,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog, getReportProgress } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportProgress, getReport } from '../api/report'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -2139,6 +2139,35 @@ const extractFinalContent = (response) => {
 
 const reportError = ref('')
 
+const loadExistingReport = async () => {
+  if (!props.reportId) return false
+  try {
+    const res = await getReport(props.reportId)
+    const data = res && res.success ? res.data : (res && res.data ? res.data : null)
+    if (!data) return false
+    const sections = (data.outline && data.outline.sections) || []
+    const hasContent = sections.some(sec => (sec.content || '').trim().length > 0)
+    if (!sections.length || !hasContent) return false
+    reportOutline.value = {
+      title: data.outline.title || (data.outline && data.outline.title) || 'التقرير',
+      summary: data.outline.summary || '',
+      sections: sections.map(sec => ({ title: sec.title })),
+    }
+    sections.forEach((sec, i) => {
+      if ((sec.content || '').trim()) generatedSections.value[i + 1] = sec.content
+    })
+    if (data.status === 'completed' || data.status === 'success') {
+      isComplete.value = true
+      reportError.value = ''
+    }
+    if (data.error) reportError.value = data.error
+    return true
+  } catch (err) {
+    console.warn('تعذر تحميل التقرير المحفوظ:', err)
+    return false
+  }
+}
+
 const checkReportProgress = async () => {
   if (!props.reportId) return
   try {
@@ -2149,6 +2178,7 @@ const checkReportProgress = async () => {
       reportError.value = data.message || 'فشل توليد التقرير.'
     } else if (data.status === 'completed' || data.status === 'success') {
       reportError.value = ''
+      if (!reportOutline.value) await loadExistingReport()
     }
   } catch (err) {
     console.warn('تعذر قراءة تقدم التقرير:', err)
@@ -2208,9 +2238,10 @@ const stopPolling = () => {
 }
 
 // Lifecycle
-onMounted(() => {
+onMounted(async () => {
   if (props.reportId) {
     addLog(`Report Agent initialized: ${props.reportId}`)
+    await loadExistingReport()
     startPolling()
   }
 })
