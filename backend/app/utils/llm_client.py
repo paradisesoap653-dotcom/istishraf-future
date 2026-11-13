@@ -103,8 +103,9 @@ def _contains_additional_json_container(content: str) -> bool:
 # لا تحتوي هذه القائمة أي سر: المفاتيح تُقرأ من متغيّرات البيئة بالاسم فقط.
 BUILTIN_FALLBACK_PROVIDERS = [
     # Google AI Studio: طبقة مجانية دائمة بلا بطاقة (والسودان ضمن الدول المدعومة)
-    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.6-flash", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.5-flash-lite", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
     # NVIDIA NIM: طبقة مجانية بلا بطاقة
     {"base_url": "https://integrate.api.nvidia.com/v1", "model": "openai/gpt-oss-120b", "api_key_env": "NVIDIA_API_KEY"},
     {"base_url": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.3-70b-instruct", "api_key_env": "NVIDIA_API_KEY"},
