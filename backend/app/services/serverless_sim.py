@@ -119,6 +119,8 @@ def write_simulation_artifacts(
                 + "\n"
             )
             for r_idx, r_item in enumerate(rounds_data, start=1):
+                if not isinstance(r_item, dict):
+                    continue
                 r_time = (base_time + timedelta(minutes=30 * r_idx)).isoformat()
                 af.write(
                     json.dumps(
@@ -127,9 +129,10 @@ def write_simulation_artifacts(
                     )
                     + "\n"
                 )
-                entries = [e for e in r_item.get("actions", []) if e.get("platform", plat) in (plat, "both")]
+                raw_actions = [e for e in (r_item.get("actions") or []) if isinstance(e, dict)]
+                entries = [e for e in raw_actions if e.get("platform", plat) in (plat, "both")]
                 if not entries:
-                    entries = r_item.get("actions", [])
+                    entries = raw_actions
 
                 round_actions = 0
                 for act in entries:
@@ -299,6 +302,33 @@ def run_serverless_simulation(
                 ],
             }
         ]
+
+    # النموذج قد يعيد عناصر غير صالحة (نصوصًا بدل كائنات) فيسقط المحرّك؛
+    # ننقّي الجولات والأفعال قبل الكتابة.
+    clean_rounds: List[Dict[str, Any]] = []
+    for r_item in rounds_data:
+        if not isinstance(r_item, dict):
+            continue
+        actions = [a for a in (r_item.get("actions") or []) if isinstance(a, dict)]
+        if actions:
+            clean_rounds.append({**r_item, "actions": actions})
+    if not clean_rounds:
+        clean_rounds = [
+            {
+                "round": 1,
+                "actions": [
+                    {
+                        "agent_id": int(agent_summary[0]["agent_id"]) if agent_summary else 0,
+                        "platform": "both",
+                        "action_type": "CREATE_POST",
+                        "content": requirement or "بدء النقاش التحليلي حول السيناريو المطروح.",
+                        "likes": 15,
+                        "shares": 4,
+                    }
+                ],
+            }
+        ]
+    rounds_data = clean_rounds
 
     counts = write_simulation_artifacts(sim_dir, profiles, rounds_data, platforms)
 
