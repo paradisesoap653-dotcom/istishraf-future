@@ -139,6 +139,22 @@ def guard_api_request():
             401,
         )
 
+    # الحساب المحذوف لا يبقى فعّالًا بتوكن قديم
+    try:
+        if not UserStore.get_user_by_id(int(user.get("id"))):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "code": "auth_required",
+                        "error": "انتهت صلاحية الجلسة، سجّل الدخول مرة أخرى",
+                    }
+                ),
+                401,
+            )
+    except Exception:
+        pass
+
     if not _user_can_access(user, values):
         return (
             jsonify({"success": False, "code": "not_found", "error": "المورد غير موجود"}),
