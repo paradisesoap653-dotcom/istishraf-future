@@ -13,6 +13,8 @@ from ..config import Config
 from ..services.zep_entity_reader import ZepEntityReader
 from ..services.oasis_profile_generator import OasisProfileGenerator
 from ..services.simulation_manager import SimulationManager, SimulationStatus
+from datetime import datetime
+from ..models import storage
 from ..services.simulation_runner import (
     SimulationRunner,
     RunnerStatus,
@@ -254,6 +256,14 @@ def create_simulation():
         }), 500
 
 
+
+def _restore(path: str) -> str:
+    """أعِد الملف من التخزين الدائم إن لم يكن على القرص المؤقت (cold start)."""
+    from ..services.simulation_runner import ensure_local_file
+
+    return ensure_local_file(path)
+
+
 def _check_simulation_prepared(simulation_id: str) -> tuple:
     """
     检查模拟是否已经准备完成
@@ -272,11 +282,13 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     """
     import os
     from ..config import Config
-    
+    from ..models import storage
+    from ..services.simulation_runner import ensure_local_file
+
     simulation_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
-    
-    # 检查目录是否存在
-    if not os.path.exists(simulation_dir):
+
+    # 目录可能只存在于 التخزين الدائم (cold start) — نستعيده قبل الفحص
+    if not os.path.exists(simulation_dir) and not storage.isdir(simulation_dir):
         return False, {"reason": "模拟目录不存在"}
     
     # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
@@ -291,7 +303,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     existing_files = []
     missing_files = []
     for f in required_files:
-        file_path = os.path.join(simulation_dir, f)
+        file_path = ensure_local_file(os.path.join(simulation_dir, f))
         if os.path.exists(file_path):
             existing_files.append(f)
         else:
@@ -305,7 +317,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         }
     
     # 检查state.json中的状态
-    state_file = os.path.join(simulation_dir, "state.json")
+    state_file = ensure_local_file(os.path.join(simulation_dir, "state.json"))
     try:
         import json
         with open(state_file, 'r', encoding='utf-8') as f:
@@ -328,7 +340,7 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         prepared_statuses = ["ready", "preparing", "running", "completed", "stopped", "failed"]
         if status in prepared_statuses and config_generated:
             # 获取文件统计信息
-            profiles_file = os.path.join(simulation_dir, "reddit_profiles.json")
+            profiles_file = ensure_local_file(os.path.join(simulation_dir, "reddit_profiles.json"))
             config_file = os.path.join(simulation_dir, "simulation_config.json")
             
             profiles_count = 0
@@ -1094,7 +1106,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
         # 获取模拟目录
         sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
         
-        if not os.path.exists(sim_dir):
+        if not os.path.exists(sim_dir) and not storage.isdir(sim_dir):
             return jsonify({
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
@@ -1102,9 +1114,9 @@ def get_simulation_profiles_realtime(simulation_id: str):
         
         # 确定文件路径
         if platform == "reddit":
-            profiles_file = os.path.join(sim_dir, "reddit_profiles.json")
+            profiles_file = _restore(os.path.join(sim_dir, "reddit_profiles.json"))
         else:
-            profiles_file = os.path.join(sim_dir, "twitter_profiles.csv")
+            profiles_file = _restore(os.path.join(sim_dir, "twitter_profiles.csv"))
         
         # 检查文件是否存在
         file_exists = os.path.exists(profiles_file)
@@ -1134,7 +1146,7 @@ def get_simulation_profiles_realtime(simulation_id: str):
         status = None
         error = None
         
-        state_file = os.path.join(sim_dir, "state.json")
+        state_file = _restore(os.path.join(sim_dir, "state.json"))
         if os.path.exists(state_file):
             try:
                 with open(state_file, 'r', encoding='utf-8') as f:
@@ -1202,14 +1214,14 @@ def get_simulation_config_realtime(simulation_id: str):
         # 获取模拟目录
         sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
         
-        if not os.path.exists(sim_dir):
+        if not os.path.exists(sim_dir) and not storage.isdir(sim_dir):
             return jsonify({
                 "success": False,
                 "error": t('api.simulationNotFound', id=simulation_id)
             }), 404
         
         # 配置文件路径
-        config_file = os.path.join(sim_dir, "simulation_config.json")
+        config_file = _restore(os.path.join(sim_dir, "simulation_config.json"))
         
         # 检查文件是否存在
         file_exists = os.path.exists(config_file)
@@ -1236,7 +1248,7 @@ def get_simulation_config_realtime(simulation_id: str):
         profiles_generated = False
         config_generated = False
         
-        state_file = os.path.join(sim_dir, "state.json")
+        state_file = _restore(os.path.join(sim_dir, "state.json"))
         if os.path.exists(state_file):
             try:
                 with open(state_file, 'r', encoding='utf-8') as f:
@@ -1775,11 +1787,27 @@ def start_simulation():
         }), 400
         
     except Exception as e:
-        logger.error(f"启动模拟失败: {str(e)}")
+        # سجّل التفاصيل في السجلّات الرسمية **وفي التخزين الدائم** حتى يمكن
+        # تشخيص الأعطال على Vercel حيث لا يبقى ملف السجل (cold start).
+        detail = traceback.format_exc()
+        logger.exception("启动模拟失败: %s", e)
+        try:
+            storage.write_json(
+                os.path.join(Config.OASIS_SIMULATION_DATA_DIR, "_diagnostics", "last_start_error.json"),
+                {
+                    "simulation_id": locals().get("simulation_id"),
+                    "error": str(e),
+                    "traceback": detail[-4000:],
+                    "at": datetime.now().isoformat(),
+                },
+            )
+        except Exception:  # pragma: no cover - التشخيص لا يجب أن يُسقط الطلب
+            logger.warning("تعذر حفظ تفاصيل الخطأ في التخزين الدائم")
+
         return jsonify({
             "success": False,
             "error": str(e),
-            "traceback": traceback.format_exc()
+            "traceback": detail
         }), 500
 
 

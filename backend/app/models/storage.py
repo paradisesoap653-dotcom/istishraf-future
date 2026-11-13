@@ -422,7 +422,15 @@ def makedirs(path: str) -> str:
 
 
 def isdir(path: str) -> bool:
-    return os.path.isdir(_local(path))
+    """هل المسار مجلد؟ يتحقق من القرص ثم من التخزين الدائم (cold start)."""
+    if os.path.isdir(_local(path)):
+        return True
+    if is_durable():
+        try:
+            return bool(_pg_listdir(_key(path)))
+        except Exception:  # pragma: no cover - قاعدة غير متاحة
+            return False
+    return False
 
 
 def storage_info() -> Dict[str, Any]:
