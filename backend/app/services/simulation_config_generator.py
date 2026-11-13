@@ -679,36 +679,41 @@ class SimulationConfigGenerator:
         # 使用配置的上下文截断长度
         context_truncated = context[:self.EVENT_CONFIG_CONTEXT_LENGTH]
         
-        prompt = f"""基于以下模拟需求，生成事件配置。
+        prompt = f"""بناءً على متطلب المحاكاة التالي، أنشئ إعدادات الأحداث.
 
-模拟需求: {simulation_requirement}
+متطلب المحاكاة: {simulation_requirement}
 
 {context_truncated}
 
-## 可用实体类型及示例
+## أنواع الكيانات المتاحة وأمثلة عليها
 {type_info}
 
-## 任务
-请生成事件配置JSON：
-- 提取热点话题关键词
-- 描述舆论发展方向
-- 设计初始帖子内容，**每个帖子必须指定 poster_type（发布者类型）**
+## المهمة
+أنشئ JSON لإعدادات الأحداث يشمل:
+- استخراج الكلمات المفتاحية للموضوعات الساخنة
+- وصف اتجاه الرأي العام المتوقع
+- تصميم المنشورات الأولية، وكل منشور يجب أن يحدد **poster_type** (نوع الناشر)
 
-**重要**: poster_type 必须从上面的"可用实体类型"中选择，这样初始帖子才能分配给合适的 Agent 发布。
-例如：官方声明应由 Official/University 类型发布，新闻由 MediaOutlet 发布，学生观点由 Student 发布。
+**مهم**: قيمة poster_type يجب أن تكون من «أنواع الكيانات المتاحة» أعلاه بالضبط،
+حتى يُسند كل منشور إلى وكيل مناسب. مثال: البيان الرسمي ينشره Official/LocalAuthority،
+والخبر تنشره MediaOutlet، ورأي الطلاب ينشره Passenger/Student.
 
-返回JSON格式（不要markdown）：
+أعد JSON فقط (بلا markdown):
 {{
-    "hot_topics": ["关键词1", "关键词2", ...],
-    "narrative_direction": "<舆论发展方向描述>",
+    "hot_topics": ["كلمة1", "كلمة2", ...],
+    "narrative_direction": "<وصف اتجاه الرأي العام>",
     "initial_posts": [
-        {{"content": "帖子内容", "poster_type": "实体类型（必须从可用类型中选择）"}},
+        {{"content": "نص المنشور بالعربية", "poster_type": "نوع الكيان من القائمة"}},
         ...
     ],
-    "reasoning": "<简要说明>"
+    "reasoning": "<شرح موجز بالعربية>"
 }}"""
 
-        system_prompt = "你是舆论分析专家。返回纯JSON格式。注意 poster_type 必须精确匹配可用实体类型。"
+        system_prompt = (
+            "أنت خبير في تحليل الرأي العام. أعد JSON صالحًا فقط بلا أي شرح، "
+            "وكل المحتوى النصي (المنشورات والموضوعات والوصف) بالعربية الفصحى، "
+            "ولا تكتب أي حرف صيني."
+        )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
 
         try:
@@ -719,7 +724,7 @@ class SimulationConfigGenerator:
                 "hot_topics": [],
                 "narrative_direction": "",
                 "initial_posts": [],
-                "reasoning": "使用默认配置"
+                "reasoning": "إعدادات افتراضية لعدم توفر توليد تلقائي"
             }
     
     def _parse_event_config(self, result: Dict[str, Any]) -> EventConfig:
