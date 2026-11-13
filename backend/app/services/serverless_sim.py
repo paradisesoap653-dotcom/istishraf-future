@@ -222,11 +222,13 @@ def run_serverless_simulation(
     max_rounds: int = 3,
 ) -> Dict[str, Any]:
     """يشغّل محاكاة متعددة الوكلاء عبر LLM مباشرة خلال ثوانٍ ويحفظ جميع المخرجات القياسية."""
-    config_path = os.path.join(sim_dir, "simulation_config.json")
+    from .simulation_runner import ensure_local_file
+
+    config_path = ensure_local_file(os.path.join(sim_dir, "simulation_config.json"))
     with open(config_path, "r", encoding="utf-8") as f:
         sim_config = json.load(f)
 
-    reddit_path = os.path.join(sim_dir, "reddit_profiles.json")
+    reddit_path = ensure_local_file(os.path.join(sim_dir, "reddit_profiles.json"))
     profiles: List[Dict[str, Any]] = []
     if os.path.exists(reddit_path):
         with open(reddit_path, "r", encoding="utf-8") as f:

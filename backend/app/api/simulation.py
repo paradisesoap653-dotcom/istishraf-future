@@ -1343,8 +1343,10 @@ def download_simulation_config(simulation_id: str):
     try:
         manager = SimulationManager()
         sim_dir = manager._get_simulation_dir(simulation_id)
-        config_path = os.path.join(sim_dir, "simulation_config.json")
-        
+        from ..services.simulation_runner import ensure_local_file
+
+        config_path = ensure_local_file(os.path.join(sim_dir, "simulation_config.json"))
+
         if not os.path.exists(config_path):
             return jsonify({
                 "success": False,

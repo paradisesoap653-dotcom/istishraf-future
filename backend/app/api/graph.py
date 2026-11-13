@@ -712,6 +712,11 @@ def _build_graph_impl():
                 owner_user_id=(current_user or {}).get("id"),
                 dedupe_key=f"graph_build:{project_id}",
             )
+            if job_id:
+                from ..utils import worker_wake
+
+                worker_wake.wake_async("graph_build")
+
             active_job = job_queue.get(job_id) if job_id else None
             if active_job and active_job.get("task_id") not in (None, task_id):
                 # يوجد بناء نشط لهذا المشروع بالفعل؛ لا نُشغّل نموذجًا لغويًا

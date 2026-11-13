@@ -28,6 +28,34 @@ from ..utils.zep import (
 from .zep_graph_memory_updater import ZepGraphMemoryManager
 from .simulation_ipc import SimulationIPCClient, CommandType, IPCResponse
 
+try:  # التخزين الدائم (Neon) — ضروري لأن قرص Vercel مؤقت
+    from ..models import storage as _storage
+except Exception:  # pragma: no cover - بيئة بلا قاعدة بيانات
+    _storage = None
+
+
+def ensure_local_file(path: str) -> str:
+    """أعِد الملف من التخزين الدائم إن لم يكن على القرص المحلي (cold start)."""
+    if os.path.exists(path):
+        return path
+    if _storage is not None and getattr(_storage, "is_durable", lambda: False)():
+        try:
+            return _storage.ensure_local(path)
+        except FileNotFoundError:
+            return path
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"تعذر استعادة الملف من التخزين الدائم: {path} ({exc})")
+    return path
+
+
+def persist_file(path: str) -> None:
+    """انسخ الملف إلى التخزين الدائم بعد كتابته محليًا."""
+    if _storage is not None and getattr(_storage, "is_durable", lambda: False)():
+        try:
+            _storage.push_file(path)
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"تعذر حفظ الملف في التخزين الدائم: {path} ({exc})")
+
 logger = get_logger('mirofish.simulation_runner')
 
 # 标记是否已注册清理函数
@@ -298,6 +326,7 @@ class SimulationRunner:
     def _load_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
         """从文件加载运行状态"""
         state_file = os.path.join(cls.RUN_STATE_DIR, simulation_id, "run_state.json")
+        state_file = ensure_local_file(state_file)
         if not os.path.exists(state_file):
             return None
         
@@ -361,7 +390,10 @@ class SimulationRunner:
         
         with open(state_file, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        
+
+        # ثبّت الحالة في التخزين الدائم حتى تصمد عبر cold start
+        persist_file(state_file)
+
         cls._run_states[state.simulation_id] = state
     
     @classmethod
@@ -386,12 +418,12 @@ class SimulationRunner:
         Returns:
             SimulationRunState
         """
-        # 加载模拟配置
+        # 加载模拟配置 (مع استعادته من التخزين الدائم عند الحاجة)
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
-        config_path = os.path.join(sim_dir, "simulation_config.json")
-        
+        config_path = ensure_local_file(os.path.join(sim_dir, "simulation_config.json"))
+
         if not os.path.exists(config_path):
-            raise ValueError(f"模拟配置不存在，请先调用 /prepare 接口")
+            raise ValueError(f"模拟配置不存在، يُرجى إعادة التجهيز: /api/simulation/prepare")
         
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
@@ -1902,8 +1934,8 @@ class SimulationRunner:
         if not os.path.exists(sim_dir):
             raise ValueError(f"模拟不存在: {simulation_id}")
 
-        # 从配置文件获取所有Agent信息
-        config_path = os.path.join(sim_dir, "simulation_config.json")
+        # 从配置文件获取所有Agent信息 (مع استعادته من التخزين الدائم عند الحاجة)
+        config_path = ensure_local_file(os.path.join(sim_dir, "simulation_config.json"))
         if not os.path.exists(config_path):
             raise ValueError(f"模拟配置不存在: {simulation_id}")
 
