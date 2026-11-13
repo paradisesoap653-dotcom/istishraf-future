@@ -128,6 +128,32 @@ def create_app(config_class=Config):
             payload['queue'] = job_queue.stats()
         except Exception:  # pragma: no cover - لا يجب أن يُسقط /health
             payload['queue'] = {'enabled': False}
+        # حالة سلسلة نماذج الذكاء الاصطناعي (بلا مفاتيح): أي مزوّد بديل جاهز؟
+        try:
+            import json as _json
+            import os as _os
+
+            chain = [{'provider': 'primary', 'model': Config.LLM_MODEL_NAME}]
+            for name in (Config.LLM_FALLBACK_MODELS or '').split(','):
+                if name.strip():
+                    chain.append({'provider': 'same', 'model': name.strip()})
+            try:
+                providers = _json.loads(Config.LLM_FALLBACK_PROVIDERS or '[]')
+            except Exception:  # noqa: BLE001
+                providers = []
+            for item in providers if isinstance(providers, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                key_env = item.get('api_key_env')
+                has_key = bool(item.get('api_key') or (key_env and _os.environ.get(key_env)))
+                chain.append({
+                    'provider': (item.get('base_url') or '').split('//')[-1].split('/')[0],
+                    'model': item.get('model'),
+                    'key_present': has_key,
+                })
+            payload['llm'] = chain
+        except Exception:  # pragma: no cover
+            pass
         # فحص عميق اختياري: /health?deep=1 يحاول اتصالًا حقيقيًا بقاعدة البيانات
         if request.args.get('deep') in ('1', 'true', 'yes'):
             payload['database'] = 'ok' if storage.check_connection() else 'unavailable'
