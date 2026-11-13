@@ -830,7 +830,14 @@ def get_graph_data(graph_id: str):
     获取图谱数据（节点和边）
     """
     try:
+        from ..models import storage
         local_graph_file = os.path.join(Config.UPLOAD_FOLDER, 'graphs', f'{graph_id}.json')
+        # بعد cold start قد لا يكون ملف الشبكة على القرص المؤقت، فنستعيده من Neon
+        if not os.path.exists(local_graph_file):
+            try:
+                storage.ensure_local(local_graph_file)
+            except Exception:
+                pass
         if os.path.exists(local_graph_file):
             import json
             with open(local_graph_file, 'r', encoding='utf-8') as f:
