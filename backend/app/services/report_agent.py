@@ -401,6 +401,7 @@ class ReportSection:
     """报告章节"""
     title: str
     content: str = ""
+    description: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -587,7 +588,8 @@ PLAN_SYSTEM_PROMPT = """\
     ]
 }
 
-注意：必须恰好输出 3 个章节（不多不少），以便控制生成成本！"""
+注意：必须恰好输出 3 个章节（不多不少），以便控制生成成本！
+重要：不要调用任何工具（no tool calls, no function calls），只输出 JSON 文本。"""
 
 PLAN_USER_PROMPT_TEMPLATE = """\
 【预测场景设定】
@@ -1230,7 +1232,8 @@ class ReportAgent:
             for section_data in response.get("sections", []):
                 sections.append(ReportSection(
                     title=section_data.get("title", ""),
-                    content=""
+                    content="",
+                    description=section_data.get("description", ""),
                 ))
             
             outline = ReportOutline(
@@ -1659,10 +1662,15 @@ class ReportAgent:
             if progress_callback:
                 progress_callback("planning", 0, t('progress.startPlanningOutline'))
             
-            outline = self.plan_outline(
-                progress_callback=lambda stage, prog, msg: 
-                    progress_callback(stage, prog // 5, msg) if progress_callback else None
-            )
+            try:
+                outline = self.plan_outline(
+                    progress_callback=lambda stage, prog, msg:
+                        progress_callback(stage, prog // 5, msg) if progress_callback else None
+                )
+            except Exception as plan_exc:  # noqa: BLE001
+                # خطة احتياطية: لا نُسقط التقرير إن رفض المزوّد مرحلة التخطيط
+                logger.warning("فشل التخطيط؛ استخدام خطة احتياطية: %s", plan_exc)
+                outline = ReportAgent._fallback_outline(self.simulation_requirement)
             report.outline = outline
             
             # 记录规划完成日志
@@ -1683,6 +1691,7 @@ class ReportAgent:
             
             total_sections = len(outline.sections)
             generated_sections = []  # 保存内容用于上下文
+            grounding_context = self._build_grounding_context()
             
             for i, section in enumerate(outline.sections):
                 section_num = i + 1
@@ -1704,17 +1713,15 @@ class ReportAgent:
                     )
                 
                 # 生成主章节内容
-                section_content = self._generate_section_react(
+                # التوليد المباشر: نداء واحد بلا أدوات. أُضيف لأن نماذج مجانية
+                # (gpt-oss على Groq) تنادي أدوات غير معرّفة فترفض الطلب بـ400،
+                # ما كان يُسقط التقرير كاملًا. المعطيات تُجمع محليًا هنا.
+                section_content = self._generate_section_direct(
                     section=section,
                     outline=outline,
                     previous_sections=generated_sections,
-                    progress_callback=lambda stage, prog, msg:
-                        progress_callback(
-                            stage, 
-                            base_progress + int(prog * 0.7 / total_sections),
-                            msg
-                        ) if progress_callback else None,
-                    section_index=section_num
+                    grounding=grounding_context,
+                    section_index=section_num,
                 )
                 
                 section.content = section_content
@@ -1841,6 +1848,139 @@ class ReportAgent:
             
             return report
     
+    @staticmethod
+    def _fallback_outline(simulation_requirement: str) -> "ReportOutline":
+        """خطة تقرير جاهزة من 3 أقسام تُستخدم إذا تعذّر التخطيط الآلي."""
+        short = (simulation_requirement or "").strip().replace("\n", " ")
+        short = short[:180]
+        return ReportOutline(
+            title="تقرير توقعات مستقبلية مبني على المحاكاة",
+            summary=f"قراءة تنبؤية لأثر: {short}… اعتمادًا على تفاعلات الوكلاء في المحاكاة.",
+            sections=[
+                ReportSection(
+                    title="أبرز التوقعات وردود الفعل الأولية",
+                    description="ما الذي حدث في المحاكاة من تفاعلات ومواقف، وكيف توزّعت ردود الأفعال.",
+                ),
+                ReportSection(
+                    title="المخاطر والاعتراضات المحتملة",
+                    description="نقاط التحفّظ والاعتراضات التي ظهرت، ومصادر فقدان الثقة.",
+                ),
+                ReportSection(
+                    title="التوصيات التنفيذية والخطوات التالية",
+                    description="قرارات عملية للجهة المعنية، مرتبة حسب الأولوية والأثر.",
+                ),
+            ],
+        )
+
+    def _build_grounding_context(self, max_chars: int = 2600) -> str:
+        """يجمع معطيات التقرير محليًا (الشبكة + أحداث المحاكاة) بدل أدوات النموذج.
+
+        الهدف: توليد الأقسام بدون أي أداة، لأن بعض النماذج المجانية ترفض
+        إخراج نداء أدوات غير معرّفة وتفشل الطلب بالكامل.
+        """
+        parts: List[str] = []
+
+        try:
+            graph = storage.read_json(f"graphs/{self.graph_id}.json") or {}
+            nodes = graph.get("nodes") or []
+            edges = graph.get("edges") or []
+            node_lines = []
+            for node in nodes[:12]:
+                name = node.get("name") or node.get("uuid")
+                summary = (node.get("summary") or "").strip().replace("\n", " ")
+                node_lines.append(f"- {name}: {summary[:120]}")
+            edge_lines = []
+            for edge in edges[:12]:
+                fact = (edge.get("fact") or "").strip().replace("\n", " ")
+                if fact:
+                    edge_lines.append(f"- {fact[:110]}")
+            if node_lines:
+                parts.append("الكيانات الأساسية في الشبكة:\n" + "\n".join(node_lines))
+            if edge_lines:
+                parts.append("علاقات ووقائع محورية:\n" + "\n".join(edge_lines))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر قراءة الشبكة لبناء السياق: %s", exc)
+
+        try:
+            state = storage.read_json(f"simulations/{self.simulation_id}/state.json") or {}
+            summary_bits = []
+            for key in ("status", "entities_count", "profiles_count", "current_round", "total_rounds"):
+                if state.get(key) not in (None, "", []):
+                    summary_bits.append(f"{key}={state.get(key)}")
+            if summary_bits:
+                parts.append("حالة المحاكاة: " + ", ".join(summary_bits))
+        except Exception:  # noqa: BLE001
+            pass
+
+        for platform in ("twitter", "reddit"):
+            try:
+                raw = storage.read_text(f"simulations/{self.simulation_id}/{platform}/actions.jsonl") or ""
+                lines = [ln for ln in raw.splitlines() if ln.strip()]
+                if not lines:
+                    continue
+                sample = lines[-6:]
+                texts = []
+                for line in sample:
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    text = (item.get("action") or item.get("content") or item.get("text") or "").strip()
+                    if not text:
+                        inner = item.get("action_args") or {}
+                        text = str(inner.get("content") or inner.get("text") or "").strip()
+                    if text:
+                        texts.append(f"- {item.get('agent_name') or item.get('user') or 'عضو'}: {text[:130]}")
+                if texts:
+                    parts.append(f"نماذج من تفاعلات {platform} ({len(lines)} حدثًا):\n" + "\n".join(texts))
+            except Exception:  # noqa: BLE001
+                continue
+
+        context = "\n\n".join(parts).strip()
+        return context[:max_chars]
+
+    def _generate_section_direct(
+        self,
+        section: "ReportSection",
+        outline: "ReportOutline",
+        previous_sections: List[str],
+        grounding: str,
+        section_index: int = 1,
+    ) -> str:
+        """يولّد قسمًا واحدًا بنداء نموذج واحد فقط — بلا أي أدوات."""
+        previous_text = ""
+        if previous_sections:
+            joined = "\n\n---\n\n".join(previous_sections)
+            previous_text = joined[:800]
+
+        system_prompt = (
+            "أنت كاتب تقارير استراتيجية عربية. تكتب قسمًا واحدًا من تقرير توقعات "
+            "مبني على محاكاة ذكاء اصطناعي. اكتب بعربية فصحى واضحة، بنثر مترابط، "
+            "مع عناوين فرعية قصيرة عند الحاجة، واستند فقط إلى المعطيات المرفقة. "
+            "لا تذكر أنك نموذج لغوي، ولا تنادِ أي أدوات، ولا تكتب تعليمات برمجية."
+        )
+
+        user_prompt = (
+            f"عنوان التقرير: {outline.title}\n"
+            f"ملخص التقرير: {outline.summary}\n"
+            f"هدف الدراسة: {self.simulation_requirement}\n\n"
+            f"المعطيات المتاحة من المحاكاة:\n{grounding or 'لا توجد معطيات تفصيلية؛ اعتمد على هدف الدراسة.'}\n\n"
+            f"القسم المطلوب ({section_index}/{len(outline.sections)}): {section.title}\n"
+            f"وصف القسم: {section.description}\n\n"
+            + (f"ملخص ما كتبته في الأقسام السابقة:\n{previous_text}\n\n" if previous_text else "")
+            + "اكتب الآن محتوى هذا القسم فقط، من 250 إلى 450 كلمة، دون تكرار عنوان القسم."
+        )
+
+        content = self.llm.chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.6,
+            max_tokens=1400,
+        )
+        return (content or "").strip()
+
     @staticmethod
     def _friendly_error_message(error: Exception) -> str:
         """ترجمة أخطاء المزوّد التقنية إلى رسالة عربية مفهومة للمستخدم."""
