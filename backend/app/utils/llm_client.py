@@ -6,6 +6,7 @@ LLM客户端封装
 import json
 import logging
 import re
+import time
 from typing import Optional, Dict, Any, List
 from openai import OpenAI
 
@@ -119,14 +120,39 @@ class LLMClient:
     ) -> Any:
         """Send one raw Chat Completions request through the compatibility layer."""
 
-        return create_chat_completion(
-            self.client,
-            model=self.model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format=response_format,
-        )
+        # بعض المزوّدين (مثل Groq في الطبقة المجانية) يحدّون عدد الرموز في
+        # الدقيقة (TPM) ويرفضون الطلب بـ413/429. ننتظر انتهاء نافذة الدقيقة
+        # ونعيد المحاولة بدل إسقاط التقرير كاملًا.
+        attempts = 0
+        while True:
+            try:
+                return create_chat_completion(
+                    self.client,
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=response_format,
+                )
+            except Exception as exc:  # noqa: BLE001 - نفحص نوع الخطأ من نصه
+                detail = str(exc)
+                limited = any(
+                    token in detail
+                    for token in (
+                        " 413", "413 ", "429", "tokens per minute", "TPM",
+                        "rate limit", "Rate limit", "RATE_LIMIT",
+                    )
+                )
+                if not limited or attempts >= 2:
+                    raise
+                attempts += 1
+                wait_seconds = 62 if ("413" in detail or "tokens per minute" in detail) else 20
+                logger.warning(
+                    "حدّ معدّل الطلبات من المزوّد؛ إعادة المحاولة بعد %s ثانية (محاولة %s)",
+                    wait_seconds,
+                    attempts,
+                )
+                time.sleep(wait_seconds)
     
     def chat(
         self,

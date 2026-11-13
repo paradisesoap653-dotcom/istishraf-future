@@ -1301,14 +1301,15 @@ class ReportAgent:
         )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
-        # 构建用户prompt - 每个已完成章节各传入最大4000字
+        # بناء طلب المستخدم: نمرّر ملخّصًا قصيرًا من الأقسام السابقة فقط، لأن
+        # حدود المزوّد (TPM) صغيرة جدًا؛ تمرير كل الأقسام كان يرفع حجم الطلب
+        # إلى ما يفوق الحد ويفشل التقرير بخطأ 413.
         if previous_sections:
             previous_parts = []
             for sec in previous_sections:
-                # 每个章节最多4000字
-                truncated = sec[:4000] + "..." if len(sec) > 4000 else sec
+                truncated = sec[:700] + "..." if len(sec) > 700 else sec
                 previous_parts.append(truncated)
-            previous_content = "\n\n---\n\n".join(previous_parts)
+            previous_content = "\n\n---\n\n".join(previous_parts)[:1600]
         else:
             previous_content = "（这是第一个章节）"
         
@@ -1341,11 +1342,11 @@ class ReportAgent:
                     t('progress.deepSearchAndWrite', current=tool_calls_count, max=self.MAX_TOOL_CALLS_PER_SECTION)
                 )
             
-            # 调用LLM
+            # 调用LLM (مع تقليص الطلب ليبقى داخل حدّ الرموز لكل دقيقة)
             response = self.llm.chat(
-                messages=messages,
+                messages=_limit_request_size(messages),
                 temperature=0.5,
-                max_tokens=4096
+                max_tokens=2048
             )
 
             # 检查 LLM 返回是否为 None（API 异常或内容为空）
@@ -1502,7 +1503,7 @@ class ReportAgent:
                     "role": "user",
                     "content": REACT_OBSERVATION_TEMPLATE.format(
                         tool_name=call["name"],
-                        result=result,
+                        result=(result[:2500] + "\n… (اقتُصرت النتيجة لتجاوز حدّ الطلب)" if len(result) > 2500 else result),
                         tool_calls_count=tool_calls_count,
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                         used_tools_str=", ".join(used_tools),
@@ -1549,9 +1550,9 @@ class ReportAgent:
         messages.append({"role": "user", "content": REACT_FORCE_FINAL_MSG})
         
         response = self.llm.chat(
-            messages=messages,
+            messages=_limit_request_size(messages),
             temperature=0.5,
-            max_tokens=4096
+            max_tokens=2048
         )
 
         # 检查强制收尾时 LLM 返回是否为 None
@@ -1927,6 +1928,32 @@ class ReportAgent:
             "tool_calls": tool_calls_made,
             "sources": [tc.get("parameters", {}).get("query", "") for tc in tool_calls_made]
         }
+
+
+MAX_REQUEST_CHARS = 8000
+
+
+def _limit_request_size(messages: List[Dict[str, str]], budget: int = MAX_REQUEST_CHARS) -> List[Dict[str, str]]:
+    """يقصّ الرسائل القديمة حتى يبقى حجم الطلب داخل حدّ المزوّد (TPM).
+
+    نحتفظ دائمًا برسالة النظام وبأحدث الرسائل، ونقصّ الأقدم.
+    """
+    if not messages:
+        return messages
+    system_message = messages[0]
+    used = len(system_message.get("content") or "")
+    kept: List[Dict[str, str]] = []
+    for message in reversed(messages[1:]):
+        content = message.get("content") or ""
+        room = budget - used
+        if room <= 300:
+            break
+        if len(content) > room:
+            content = content[:room] + "\n… (اقتُطع)"
+        kept.append({**message, "content": content})
+        used += len(content)
+    kept.reverse()
+    return [system_message] + kept
 
 
 class ReportManager:
