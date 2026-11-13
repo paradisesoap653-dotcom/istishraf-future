@@ -550,16 +550,16 @@ class SimulationConfigGenerator:
 请生成时间配置JSON。
 
 ### 基本原则（仅供参考，需根据具体事件和参与群体灵活调整）：
-- 请根据模拟场景推断目标用户群体所在时区和作息习惯，以下为东八区(UTC+8)的参考示例
-- 凌晨0-5点几乎无人活动（活跃度系数0.05）
-- 早上6-8点逐渐活跃（活跃度系数0.4）
-- 工作时间9-18点中等活跃（活跃度系数0.7）
-- 晚间19-22点是高峰期（活跃度系数1.5）
-- 23点后活跃度下降（活跃度系数0.5）
-- 一般规律：凌晨低活跃、早间渐增、工作时段中等、晚间高峰
-- **重要**：以下示例值仅供参考，你需要根据事件性质、参与群体特点来调整具体时段
-  - 例如：学生群体高峰可能是21-23点；媒体全天活跃；官方机构只在工作时间
-  - 例如：突发热点可能导致深夜也有讨论，off_peak_hours 可适当缩短
+- استنتج المنطقة الزمنية وعادات اليوم للفئة المستهدفة من السيناريو نفسه.
+- المرجع الافتراضي إن لم يظهر خلاف ذلك: السودان وتوقيت الخرطوم (UTC+2)، وفيه:
+  - من 0 إلى 5 فجرًا: سكون شبه تام (معامل نشاط 0.05)
+  - من 6 إلى 8 صباحًا: نشاط متزايد (0.4)
+  - من 9 إلى 16: نشاط متوسط في ساعات العمل (0.7)
+  - من 17 إلى 21: ذروة النشاط بعد العصر والمساء (1.5)
+  - بعد 22: يتراجع النشاط (0.5)
+- **مهم**: هذه القيم مرجعية فقط؛ عدّلها بحسب طبيعة الحدث والفئة
+  - طلاب: قد تكون ذروتهم 20-23؛ الإعلام نشط طوال اليوم؛ الجهات الرسمية في ساعات العمل فقط
+  - الأحداث المفاجئة قد تُبقي النقاش مستمرًا بعد منتصف الليل فتقلَّص ساعات السكون
 
 ### 返回JSON格式（不要markdown）
 
@@ -573,7 +573,7 @@ class SimulationConfigGenerator:
     "off_peak_hours": [0, 1, 2, 3, 4, 5],
     "morning_hours": [6, 7, 8],
     "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    "reasoning": "针对该事件的时间配置说明"
+    "reasoning": "شرح موجز بالعربية لسبب هذه الإعدادات"
 }}
 
 字段说明：
@@ -587,7 +587,11 @@ class SimulationConfigGenerator:
 - work_hours (int数组): 工作时段
 - reasoning (string): 简要说明为什么这样配置"""
 
-        system_prompt = "你是社交媒体模拟专家。返回纯JSON格式，时间配置需符合模拟场景中目标用户群体的作息习惯。"
+        system_prompt = (
+            "أنت خبير في محاكاة وسائل التواصل الاجتماعي. أعد JSON صالحًا فقط "
+            "(بلا أي شرح أو صيغة markdown)، ويجب أن تكون الإعدادات الزمنية مطابقة "
+            "لعادات يوم الفئة المستهدفة في السيناريو، وأن يكون حقل reasoning بالعربية."
+        )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
         try:
@@ -597,17 +601,17 @@ class SimulationConfigGenerator:
             return self._get_default_time_config(num_entities)
     
     def _get_default_time_config(self, num_entities: int) -> Dict[str, Any]:
-        """获取默认时间配置（中国人作息）"""
+        """إعدادات زمنية افتراضية تناسب السودان (توقيت الخرطوم UTC+2)."""
         return {
             "total_simulation_hours": 72,
-            "minutes_per_round": 60,  # 每轮1小时，加快时间流速
+            "minutes_per_round": 60,
             "agents_per_hour_min": max(1, num_entities // 15),
             "agents_per_hour_max": max(5, num_entities // 5),
-            "peak_hours": [19, 20, 21, 22],
+            "peak_hours": [17, 18, 19, 20, 21],
             "off_peak_hours": [0, 1, 2, 3, 4, 5],
             "morning_hours": [6, 7, 8],
-            "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-            "reasoning": "使用默认中国人作息配置（每轮1小时）"
+            "work_hours": [9, 10, 11, 12, 13, 14, 15, 16],
+            "reasoning": "إعدادات افتراضية مناسبة لساعات اليوم المحلية في السودان (توقيت الخرطوم)، بذروة بعد العصر والمساء وسكون في ساعات الفجر."
         }
     
     def _parse_time_config(self, result: Dict[str, Any], num_entities: int) -> TimeSimulationConfig:
@@ -843,7 +847,7 @@ class SimulationConfigGenerator:
 
 ## 任务
 为每个实体生成活动配置，注意：
-- **时间符合目标用户群体作息**：以下为参考（东八区），请根据模拟场景调整
+- **التوقيت يطابق عادات اليوم للفئة المستهدفة**: المرجع الافتراضي توقيت السودان (UTC+2): سكون 0-5، صباح متزايد 6-8، عمل 9-16، ذروة 17-21
 - **官方机构**（University/GovernmentAgency）：活跃度低(0.1-0.3)，工作时间(9-17)活动，响应慢(60-240分钟)，影响力高(2.5-3.0)
 - **媒体**（MediaOutlet）：活跃度中(0.4-0.6)，全天活动(8-23)，响应快(5-30分钟)，影响力高(2.0-2.5)
 - **个人**（Student/Person/Alumni）：活跃度高(0.6-0.9)，主要晚间活动(18-23)，响应快(1-15分钟)，影响力低(0.8-1.2)
@@ -857,7 +861,7 @@ class SimulationConfigGenerator:
             "activity_level": <0.0-1.0>,
             "posts_per_hour": <发帖频率>,
             "comments_per_hour": <评论频率>,
-            "active_hours": [<活跃小时列表，考虑中国人作息>],
+            "active_hours": [<ساعات النشاط، بحسب عادات اليوم المحلية>],
             "response_delay_min": <最小响应延迟分钟>,
             "response_delay_max": <最大响应延迟分钟>,
             "sentiment_bias": <-1.0到1.0>,
@@ -868,7 +872,10 @@ class SimulationConfigGenerator:
     ]
 }}"""
 
-        system_prompt = "你是社交媒体行为分析专家。返回纯JSON，配置需符合模拟场景中目标用户群体的作息习惯。"
+        system_prompt = (
+            "أنت خبير في تحليل سلوك مستخدمي وسائل التواصل. أعد JSON صالحًا فقط، "
+            "والإعدادات الزمنية مطابقة لعادات اليوم في السيناريو (المرجع الافتراضي: السودان UTC+2)."
+        )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'stance' field value MUST be one of the English strings: 'supportive', 'opposing', 'neutral', 'observer'. All JSON field names and numeric values must remain unchanged. Only natural language text fields should use the specified language."
 
         try:

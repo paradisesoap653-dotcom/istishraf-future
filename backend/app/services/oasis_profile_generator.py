@@ -598,7 +598,12 @@ class OasisProfileGenerator:
                     if "bio" not in result or not result["bio"]:
                         result["bio"] = entity_summary[:200] if entity_summary else f"{entity_type}: {entity_name}"
                     if "persona" not in result or not result["persona"]:
-                        result["persona"] = entity_summary or f"{entity_name}是一个{entity_type}。"
+                        result["persona"] = entity_summary or f"{entity_name} — {entity_type}."
+                    
+                    # الشخصية يجب أن تكون عربية: نفحص ونعيد الصياغة عند الحاجة
+                    if self._has_cjk(result):
+                        logger.warning(f"شخصية «{entity_name}» جاءت بلغة غير عربية، إعادة صياغة…")
+                        result = self._reask_arabic(entity_name, entity_type, result)
                     
                     return result
                     
@@ -624,6 +629,59 @@ class OasisProfileGenerator:
             entity_name, entity_type, entity_summary, entity_attributes
         )
     
+    _CJK_RE = None
+
+    @classmethod
+    def _has_cjk(cls, value) -> bool:
+        """هل يحتوي النص على حروف صينية/يابانية/كورية؟"""
+        import re
+
+        if cls._CJK_RE is None:
+            cls._CJK_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]")
+        if isinstance(value, str):
+            return bool(cls._CJK_RE.search(value))
+        if isinstance(value, dict):
+            return any(cls._has_cjk(v) for v in value.values())
+        if isinstance(value, (list, tuple)):
+            return any(cls._has_cjk(v) for v in value)
+        return False
+
+    def _reask_arabic(self, entity_name: str, entity_type: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """إعادة صياغة حقول الشخصية بالعربية إذا جاءت بلغة أخرى."""
+        import json as _json
+
+        try:
+            payload = getattr(self, "_last_profile_prompt", "") or ""
+            fix_prompt = (
+                "أعد كتابة الحقول النصية التالية بالعربية الفصحى فقط، مع الحفاظ على المعنى "
+                "وتفاصيل الشخصية كما هي، وبلا أي حرف صيني أو إنجليزي:\n"
+                + _json.dumps(
+                    {k: result.get(k) for k in ("bio", "persona", "profession", "interested_topics")},
+                    ensure_ascii=False,
+                )
+                + "\n\nأعد JSON بالمفاتيح نفسها فقط."
+            )
+            response = create_chat_completion(
+                self.client,
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "أنت مترجم محترف إلى العربية. أعد JSON صالحًا فقط."},
+                    {"role": "user", "content": fix_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            fixed = _json.loads(extract_chat_completion_text(response))
+            if isinstance(fixed, dict) and not self._has_cjk(fixed):
+                result.update({k: v for k, v in fixed.items() if isinstance(v, (str, list, int))})
+                logger.info(f"تمت إعادة صياغة شخصية «{entity_name}» بالعربية")
+                return result
+        except Exception as err:
+            logger.warning(f"تعذرت إعادة الصياغة العربية لـ «{entity_name}»: {str(err)[:80]}")
+
+        # احتياط أخير: استبدال النص الصيني بملخص الكيان
+        return result
+
     def _fix_truncated_json(self, content: str) -> str:
         """修复被截断的JSON（输出被max_tokens限制截断）"""
         import re
@@ -715,7 +773,13 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
+        base_prompt = (
+            "أنت خبير في بناء شخصيات مستخدمي وسائل التواصل الاجتماعي لمحاكاة الرأي العام. "
+            "أنشئ شخصيات مفصّلة وواقعية تعكس الواقع بأقصى دقة. "
+            "أعد JSON صالحًا فقط، وكل القيم النصية يجب أن تكون بالعربية الفصحى الواضحة، "
+            "بلا أي حروف صينية أو إنجليزية داخل الحقول النصية (عدا gender و mbti). "
+            "لا تستخدم أسطرًا جديدة غير مهروبة داخل القيم."
+        )
         return f"{base_prompt}\n\n{get_language_instruction()}"
     
     def _build_individual_persona_prompt(
@@ -731,40 +795,41 @@ class OasisProfileGenerator:
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:3000] if context else "无额外上下文"
         
-        return f"""为实体生成详细的社交媒体用户人设,最大程度还原已有现实情况。
+        return f"""أنشئ شخصية مستخدم مفصّلة لوسائل التواصل تعكس الواقع بأقصى دقة.
 
-实体名称: {entity_name}
-实体类型: {entity_type}
-实体摘要: {entity_summary}
-实体属性: {attrs_str}
+اسم الكيان: {entity_name}
+نوع الكيان: {entity_type}
+ملخص الكيان: {entity_summary}
+خصائص الكيان: {attrs_str}
 
-上下文信息:
+سياق إضافي:
 {context_str}
 
-请生成JSON，包含以下字段:
+أعد JSON يحتوي الحقول التالية:
 
-1. bio: 社交媒体简介，200字
-2. persona: 详细人设描述（2000字的纯文本），需包含:
-   - 基本信息（年龄、职业、教育背景、所在地）
-   - 人物背景（重要经历、与事件的关联、社会关系）
-   - 性格特征（MBTI类型、核心性格、情绪表达方式）
-   - 社交媒体行为（发帖频率、内容偏好、互动风格、语言特点）
-   - 立场观点（对话题的态度、可能被激怒/感动的内容）
-   - 独特特征（口头禅、特殊经历、个人爱好）
-   - 个人记忆（人设的重要部分，要介绍这个个体与事件的关联，以及这个个体在事件中的已有动作与反应）
-3. age: 年龄数字（必须是整数）
-4. gender: 性别，必须是英文: "male" 或 "female"
-5. mbti: MBTI类型（如INTJ、ENFP等）
-6. country: 国家（使用中文，如"中国"）
-7. profession: 职业
-8. interested_topics: 感兴趣话题数组
+1. bio: نبذة عن الحساب في وسائل التواصل، نحو 200 حرف.
+2. persona: وصف مفصّل للشخصية (نحو 2000 حرف نص عادي)، ويشمل:
+   - معلومات أساسية (العمر، المهنة، التعليم، مكان الإقامة)
+   - خلفية الشخصية (تجارب مهمة، صلتها بالحدث، علاقاتها الاجتماعية)
+   - السمات الشخصية (نمط MBTI، الطبع الأساسي، طريقة التعبير عن المشاعر)
+   - سلوكها في وسائل التواصل (معدل النشر، تفضيلات المحتوى، أسلوب التفاعل، خصائص اللغة)
+   - المواقف والآراء (موقفها من الموضوع، وما يثيرها أو يؤثر فيها)
+   - خصائص مميّزة (عبارات متكررة، تجارب خاصة، اهتمامات)
+   - ذاكرة شخصية (صلتها بالحدث، وأفعالها وردود فعلها المسجّلة فيه)
+3. age: العمر رقمًا صحيحًا.
+4. gender: بالإنكليزية فقط: "male" أو "female".
+5. mbti: نمط MBTI (مثل INTJ أو ENFP).
+6. country: الدولة بالعربية (مثل "السودان").
+7. profession: المهنة.
+8. interested_topics: مصفوفة موضوعات تهمّه.
 
-重要:
-- 所有字段值必须是字符串或数字，不要使用换行符
-- persona必须是一段连贯的文字描述
-- {get_language_instruction()} (gender字段必须用英文male/female)
-- 内容要与实体信息保持一致
-- age必须是有效的整数，gender必须是"male"或"female"
+مهم جدًا:
+- كل القيم النصية بالعربية فقط؛ يُمنع منعًا باتًا استخدام أي حرف صيني أو إنجليزي داخل bio أو persona أو profession أو interested_topics.
+- كل القيم نصوص أو أرقام بلا أسطر جديدة داخل النص.
+- persona فقرة واحدة متصلة.
+- {get_language_instruction()} (حقل gender يبقى بالإنجليزية male/female فقط)
+- المحتوى متوافق مع معلومات الكيان.
+- age عدد صحيح صالح، و gender إما "male" أو "female".
 """
 
     def _build_group_persona_prompt(
@@ -780,41 +845,43 @@ class OasisProfileGenerator:
         attrs_str = json.dumps(entity_attributes, ensure_ascii=False) if entity_attributes else "无"
         context_str = context[:3000] if context else "无额外上下文"
         
-        return f"""为机构/群体实体生成详细的社交媒体账号设定,最大程度还原已有现实情况。
+        return f"""أنشئ إعدادات حساب مفصل لهيئة أو جماعة على وسائل التواصل، يعكس الواقع بأقصى دقة.
 
-实体名称: {entity_name}
-实体类型: {entity_type}
-实体摘要: {entity_summary}
-实体属性: {attrs_str}
+اسم الكيان: {entity_name}
+نوع الكيان: {entity_type}
+ملخص الكيان: {entity_summary}
+خصائص الكيان: {attrs_str}
 
-上下文信息:
+سياق إضافي:
 {context_str}
 
-请生成JSON，包含以下字段:
+أعد JSON يحتوي الحقول التالية:
 
-1. bio: 官方账号简介，200字，专业得体
-2. persona: 详细账号设定描述（2000字的纯文本），需包含:
-   - 机构基本信息（正式名称、机构性质、成立背景、主要职能）
-   - 账号定位（账号类型、目标受众、核心功能）
-   - 发言风格（语言特点、常用表达、禁忌话题）
-   - 发布内容特点（内容类型、发布频率、活跃时间段）
-   - 立场态度（对核心话题的官方立场、面对争议的处理方式）
-   - 特殊说明（代表的群体画像、运营习惯）
-   - 机构记忆（机构人设的重要部分，要介绍这个机构与事件的关联，以及这个机构在事件中的已有动作与反应）
-3. age: 固定填30（机构账号的虚拟年龄）
-4. gender: 固定填"other"（机构账号使用other表示非个人）
-5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
-6. country: 国家（使用中文，如"中国"）
-7. profession: 机构职能描述
-8. interested_topics: 关注领域数组
+1. bio: نبذة الحساب الرسمي، نحو 200 حرف، بأسلوب مهني لائق.
+2. persona: وصف مفصل لإعداد الحساب (نحو 2000 حرف نص عادي)، ويشمل:
+   - معلومات الهيئة (الاسم الرسمي، طبيعتها، خلفية التأسيس، مهامها الأساسية)
+   - تموضع الحساب (نوعه، جمهوره المستهدف، وظيفته الأساسية)
+   - أسلوب الخطاب (خصائص اللغة، العبارات المتكررة، الموضوعات المحرّمة)
+   - خصائص المحتوى المنشور (أنواعه، معدل النشر، ساعات النشاط)
+   - الموقف الرسمي (من الموضوع الأساسي، وكيف تتعامل مع الجدل)
+   - ملاحظات خاصة (الجماعة التي تمثّلها، عادات إدارة الحساب)
+   - ذاكرة الهيئة (صلتها بالحدث، وأفعالها وردود فعلها المسجّلة فيه)
+3. age: ثابت 30 (عمر افتراضي للحساب المؤسسي).
+4. gender: ثابت "other" (الحسابات المؤسسية تُعامل كغير شخصية).
+5. mbti: نمط MBTI يصف أسلوب الحساب، مثل ISTJ للتحفظ والانضباط.
+6. country: الدولة بالعربية (مثل "السودان").
+7. profession: وصف وظيفة الهيئة.
+8. interested_topics: مصفوفة مجالات الاهتمام.
 
-重要:
-- 所有字段值必须是字符串或数字，不允许null值
-- persona必须是一段连贯的文字描述，不要使用换行符
-- {get_language_instruction()} (gender字段必须用英文"other")
-- age必须是整数30，gender必须是字符串"other"
-- 机构账号发言要符合其身份定位"""
-    
+مهم جدًا:
+- كل القيم النصية بالعربية فقط؛ يُمنع منعًا باتًا استخدام أي حرف صيني أو إنجليزي داخل bio أو persona أو profession أو interested_topics.
+- لا قيم null، وكل القيم نصوص أو أرقام بلا أسطر جديدة داخل النص.
+- persona فقرة واحدة متصلة.
+- {get_language_instruction()} (حقل gender يبقى بالإنكليزية "other")
+- age عدد صحيح 30، و gender النص "other".
+- خطاب الحساب المؤسسي يجب أن يناسب طبيعته.
+"""
+
     def _generate_profile_rule_based(
         self,
         entity_name: str,
