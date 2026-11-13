@@ -73,13 +73,25 @@
             <span class="report-error-hint">يمكنك الضغط على «توليد التقرير» مرة أخرى من صفحة المحاكاة.</span>
           </div>
         </div>
-        <div v-else-if="!reportOutline" class="waiting-placeholder">
-          <div class="waiting-animation">
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
+        <div v-else-if="!reportOutline" class="waiting-placeholder" dir="rtl">
+          <div class="waiting-card">
+            <div class="waiting-animation">
+              <div class="waiting-ring"></div>
+              <div class="waiting-ring"></div>
+              <div class="waiting-ring"></div>
+            </div>
+            <div class="waiting-status">{{ statusMessage }}</div>
+            <div class="waiting-hint">
+              التوليد يجري في الخلفية. يمكنك إغلاق الصفحة والعودة لاحقًا — التقرير يُحفظ تلقائيًا.
+            </div>
+
+            <div v-if="liveSections.length" class="live-block">
+              <div class="live-title">تم كتابة {{ liveSections.length }} قسم حتى الآن</div>
+              <div v-for="sec in liveSections" :key="sec.section_index" class="live-section">
+                <div class="live-section-body" v-html="renderMarkdown(sec.content)"></div>
+              </div>
+            </div>
           </div>
-          <span class="waiting-text">Waiting for Report Agent...</span>
         </div>
       </div>
 
@@ -400,7 +412,7 @@
 import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getAgentLog, getConsoleLog, getReportProgress, getReport } from '../api/report'
+import { getAgentLog, getConsoleLog, getReportProgress, getReport, getReportSections } from '../api/report'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -2138,6 +2150,20 @@ const extractFinalContent = (response) => {
 }
 
 const reportError = ref('')
+const statusMessage = ref('جارٍ تجهيز التقرير…')
+const liveSections = ref([])
+
+const fetchLiveSections = async () => {
+  if (!props.reportId) return
+  try {
+    const res = await getReportSections(props.reportId)
+    const data = res && res.success ? res.data : null
+    if (!data || !Array.isArray(data.sections)) return
+    liveSections.value = data.sections.filter(sec => (sec.content || '').trim().length > 0)
+  } catch (err) {
+    console.warn('تعذر قراءة الأقسام الجارية:', err)
+  }
+}
 
 const loadExistingReport = async () => {
   if (!props.reportId) return false
@@ -2174,12 +2200,32 @@ const checkReportProgress = async () => {
     const res = await getReportProgress(props.reportId)
     const data = res && res.success ? res.data : null
     if (!data) return
+
     if (data.status === 'failed') {
       reportError.value = data.message || 'فشل توليد التقرير.'
-    } else if (data.status === 'completed' || data.status === 'success') {
-      reportError.value = ''
-      if (!reportOutline.value) await loadExistingReport()
+      return
     }
+
+    if (data.status === 'completed' || data.status === 'success') {
+      reportError.value = ''
+      if (!reportOutline.value) {
+        const loaded = await loadExistingReport()
+        if (!loaded) await fetchLiveSections()
+      }
+      return
+    }
+
+    // رسائل واضحة بدل الانتظار الصامت
+    if (data.status === 'pending') {
+      statusMessage.value = 'التقرير في قائمة المهام، سيبدأ خلال دقيقة إلى خمس دقائق…'
+    } else if (data.status === 'planning') {
+      statusMessage.value = 'يُخطَّط لهيكل التقرير وأقسامه…'
+    } else if (data.message) {
+      statusMessage.value = data.message
+    } else {
+      statusMessage.value = 'جارٍ كتابة أقسام التقرير…'
+    }
+    await fetchLiveSections()
   } catch (err) {
     console.warn('تعذر قراءة تقدم التقرير:', err)
   }
@@ -2685,6 +2731,57 @@ watch(() => props.reportId, (newId) => {
 }
 
 /* Waiting Placeholder */
+.waiting-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 640px;
+  padding: 10px 4px 30px;
+}
+.waiting-status {
+  font-size: 15px;
+  font-weight: 600;
+  color: #2b3445;
+  text-align: center;
+  line-height: 1.9;
+}
+.waiting-hint {
+  font-size: 12px;
+  color: #7b8598;
+  text-align: center;
+  line-height: 1.9;
+  max-width: 460px;
+}
+.live-block {
+  width: 100%;
+  margin-top: 14px;
+  padding-top: 16px;
+  border-top: 1px dashed rgba(0, 0, 0, .12);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.live-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a5568;
+  text-align: right;
+}
+.live-section {
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, .08);
+  border-radius: 14px;
+  padding: 16px 18px;
+  text-align: right;
+  line-height: 2;
+  font-size: 14px;
+  color: #2d3748;
+}
+.live-section-body :deep(h2) { font-size: 16px; margin: 0 0 10px; }
+.live-section-body :deep(p) { margin: 0 0 10px; }
+
 .report-error-box {
   display: flex;
   flex-direction: column;

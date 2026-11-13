@@ -57,3 +57,11 @@ export const chatWithReport = (data) => {
 export const getReportProgress = (reportId) => {
   return service.get(`/api/report/${reportId}/progress`)
 }
+
+/**
+ * الأقسام المكتوبة حتى الآن (لعرضها أثناء التوليد)
+ * @param {string} reportId
+ */
+export const getReportSections = (reportId) => {
+  return service.get(`/api/report/${reportId}/sections`)
+}
