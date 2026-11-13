@@ -130,27 +130,13 @@ def create_app(config_class=Config):
             payload['queue'] = {'enabled': False}
         # حالة سلسلة نماذج الذكاء الاصطناعي (بلا مفاتيح): أي مزوّد بديل جاهز؟
         try:
-            import json as _json
-            import os as _os
+            from .utils.llm_client import describe_fallback_providers
 
-            chain = [{'provider': 'primary', 'model': Config.LLM_MODEL_NAME}]
+            chain = [{'provider': 'الأساسي', 'model': Config.LLM_MODEL_NAME, 'key_present': True}]
             for name in (Config.LLM_FALLBACK_MODELS or '').split(','):
                 if name.strip():
-                    chain.append({'provider': 'same', 'model': name.strip()})
-            try:
-                providers = _json.loads(Config.LLM_FALLBACK_PROVIDERS or '[]')
-            except Exception:  # noqa: BLE001
-                providers = []
-            for item in providers if isinstance(providers, list) else []:
-                if not isinstance(item, dict):
-                    continue
-                key_env = item.get('api_key_env')
-                has_key = bool(item.get('api_key') or (key_env and _os.environ.get(key_env)))
-                chain.append({
-                    'provider': (item.get('base_url') or '').split('//')[-1].split('/')[0],
-                    'model': item.get('model'),
-                    'key_present': has_key,
-                })
+                    chain.append({'provider': 'نموذج بديل (نفس المزوّد)', 'model': name.strip(), 'key_present': True})
+            chain.extend(describe_fallback_providers())
             payload['llm'] = chain
         except Exception:  # pragma: no cover
             pass

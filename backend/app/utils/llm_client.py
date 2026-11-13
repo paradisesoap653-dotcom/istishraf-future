@@ -99,6 +99,30 @@ def _contains_additional_json_container(content: str) -> bool:
     return False
 
 
+# مزوّدون مجانيون إضافيون يُستخدمون تلقائيًا إذا وُجد مفتاحهم في البيئة.
+# لا تحتوي هذه القائمة أي سر: المفاتيح تُقرأ من متغيّرات البيئة بالاسم فقط.
+BUILTIN_FALLBACK_PROVIDERS = [
+    {"base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "api_key_env": "CEREBRAS_API_KEY"},
+    {"base_url": "https://api.cerebras.ai/v1", "model": "qwen-3-32b", "api_key_env": "CEREBRAS_API_KEY"},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-flash-latest", "api_key_env": "GEMINI_API_KEY"},
+]
+
+
+def describe_fallback_providers() -> List[Dict[str, Any]]:
+    """وصف المزوّدين المجانيين وحالة وجود مفاتيحهم (بلا كشف أي مفتاح)."""
+    described = []
+    for item in BUILTIN_FALLBACK_PROVIDERS:
+        key_env = item.get("api_key_env")
+        described.append({
+            "provider": (item.get("base_url") or "").split("//")[-1].split("/")[0],
+            "model": item.get("model"),
+            "key_env": key_env,
+            "key_present": bool(key_env and os.environ.get(key_env)),
+        })
+    return described
+
+
 def _error_text(error: Exception) -> str:
     """نص الخطأ كاملًا (رسالة + تفاصيل) لتصنيفه بدقة."""
     parts = [str(error)]
@@ -203,31 +227,34 @@ class LLMClient:
             })
 
         raw_providers = (getattr(Config, "LLM_FALLBACK_PROVIDERS", "") or "").strip()
+        env_providers: List[Any] = []
         if raw_providers:
             try:
-                providers = json.loads(raw_providers)
+                env_providers = json.loads(raw_providers)
             except json.JSONDecodeError:
                 logger.warning("LLM_FALLBACK_PROVIDERS ليس JSON صالحًا؛ تم تجاهله")
-                providers = []
+                env_providers = []
+        if not isinstance(env_providers, list):
+            env_providers = []
 
-            for item in providers if isinstance(providers, list) else []:
-                if not isinstance(item, dict):
-                    continue
-                base = item.get("base_url")
-                model = item.get("model")
-                key = item.get("api_key")
-                if not key and item.get("api_key_env"):
-                    key = os.environ.get(str(item["api_key_env"]))
-                if not (base and model and key):
-                    continue
-                try:
-                    candidates.append({
-                        "client": OpenAI(api_key=key, base_url=base),
-                        "model": model,
-                        "label": f"{model} @ {base}",
-                    })
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("تعذر تهيئة مزوّد بديل %s: %s", base, exc)
+        for item in [*env_providers, *BUILTIN_FALLBACK_PROVIDERS]:
+            if not isinstance(item, dict):
+                continue
+            base = item.get("base_url")
+            model = item.get("model")
+            key = item.get("api_key")
+            if not key and item.get("api_key_env"):
+                key = os.environ.get(str(item["api_key_env"]))
+            if not (base and model and key):
+                continue
+            try:
+                candidates.append({
+                    "client": OpenAI(api_key=key, base_url=base),
+                    "model": model,
+                    "label": f"{model} @ {base}",
+                })
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("تعذر تهيئة مزوّد بديل %s: %s", base, exc)
 
         logger.info(
             "مرشّحو النموذج (%s): %s",
