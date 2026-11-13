@@ -688,11 +688,36 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
-onMounted(() => {
+onMounted(async () => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
-    doStartSimulation()
+  if (!props.simulationId) return
+
+  // لا تبدأ محاكاة جديدة عند مجرد فتح الصفحة أو تحديثها: افحص الحالة أولًا.
+  // إعادة التشغيل القسرية كانت تمحو وقائع المحاكاة المنتهية بلا طلب المستخدم.
+  try {
+    const res = await getRunStatus(props.simulationId)
+    const data = res && res.success ? res.data : null
+    if (data) {
+      runStatus.value = data
+      if (data.runner_status === 'completed' || data.runner_status === 'stopped') {
+        addLog(t('log.simCompleted'))
+        phase.value = 2
+        emit('update-status', 'completed')
+        await fetchRunStatusDetail()
+        return
+      }
+      if (data.runner_status === 'running' || data.runner_status === 'paused') {
+        phase.value = 1
+        startStatusPolling()
+        startDetailPolling()
+        return
+      }
+    }
+  } catch (err) {
+    console.warn('تعذر قراءة حالة التشغيل الحالية:', err)
   }
+
+  doStartSimulation()
 })
 
 onUnmounted(() => {
@@ -873,6 +898,31 @@ onUnmounted(() => {
 }
 
 /* Action Button */
+.action-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* على الجوال: شريط التحكم يلتف بدل أن يخفي زر توليد التقرير */
+@media (max-width: 768px) {
+  .control-bar {
+    height: auto;
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .action-controls {
+    width: 100%;
+  }
+  .action-controls .action-btn,
+  .action-btn.primary {
+    width: 100%;
+  }
+}
+
 .action-btn {
   display: inline-flex;
   align-items: center;
