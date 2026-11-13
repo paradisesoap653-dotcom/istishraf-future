@@ -5,6 +5,7 @@ LLM客户端封装
 
 import json
 import logging
+import os
 import re
 import time
 from typing import Optional, Dict, Any, List
@@ -98,6 +99,60 @@ def _contains_additional_json_container(content: str) -> bool:
     return False
 
 
+def _error_text(error: Exception) -> str:
+    """نص الخطأ كاملًا (رسالة + تفاصيل) لتصنيفه بدقة."""
+    parts = [str(error)]
+    body = getattr(error, "body", None)
+    if isinstance(body, dict):
+        parts.append(json.dumps(body, ensure_ascii=False))
+    return " ".join(parts).lower()
+
+
+def _is_daily_quota_error(error: Exception) -> bool:
+    """نفاد الحصة اليومية للنموذج → ننتقل إلى نموذج/مزوّد آخر بدل الانتظار."""
+    detail = _error_text(error)
+    return (
+        "tokens per day" in detail
+        or "tpd" in detail
+        or "requests per day" in detail
+        or "rpd" in detail
+        or "daily quota" in detail
+        or "per day" in detail
+    )
+
+
+def _is_model_missing_error(error: Exception) -> bool:
+    """النموذج غير موجود أو أُوقف → نتجاوزه بهدوء."""
+    detail = _error_text(error)
+    status = getattr(error, "status_code", None)
+    if status == 404:
+        return True
+    return any(
+        phrase in detail
+        for phrase in (
+            "does not exist",
+            "not found",
+            "decommissioned",
+            "model_not_found",
+            "no such model",
+            "unknown model",
+            "not supported for model",
+        )
+    )
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    """حدّ لحظي (في الدقيقة) → انتظار قصير ثم إعادة المحاولة على نفس النموذج."""
+    detail = _error_text(error)
+    return any(
+        token in detail
+        for token in (
+            " 413", "413 ", "429", "tokens per minute", "tpm",
+            "rate limit", "rate_limit", "too many requests",
+        )
+    )
+
+
 class LLMClient:
     """LLM客户端"""
     
@@ -119,6 +174,82 @@ class LLMClient:
             base_url=self.base_url
         )
 
+        # قائمة المرشّحين: النموذج الأساسي ثم النماذج/المزوّدون البديلون.
+        # الهدف: ألا يتوقف الموقع كله حين تنفد حصة نموذج واحد في اليوم.
+        self._candidates = self._build_candidates()
+        self._candidate_index = 0
+
+    def _build_candidates(self) -> List[Dict[str, Any]]:
+        """يبني قائمة (عميل، اسم نموذج) تبدأ بالنموذج الأساسي."""
+        candidates: List[Dict[str, Any]] = [
+            {"client": self.client, "model": self.model, "label": f"{self.model} (أساسي)"}
+        ]
+        seen = {self.model}
+
+        raw_models = (getattr(Config, "LLM_FALLBACK_MODELS", "") or "").strip()
+        model_list = [m.strip() for m in raw_models.split(",") if m.strip()]
+        if not model_list and "groq" in (self.base_url or "").lower():
+            # حصص Groq المجانية منفصلة لكل نموذج، فهذا يضاعف السعة بلا أي دفع.
+            model_list = ["openai/gpt-oss-20b"]
+
+        for name in model_list:
+            if name in seen:
+                continue
+            seen.add(name)
+            candidates.append({
+                "client": self.client,
+                "model": name,
+                "label": f"{name} (نموذج بديل)",
+            })
+
+        raw_providers = (getattr(Config, "LLM_FALLBACK_PROVIDERS", "") or "").strip()
+        if raw_providers:
+            try:
+                providers = json.loads(raw_providers)
+            except json.JSONDecodeError:
+                logger.warning("LLM_FALLBACK_PROVIDERS ليس JSON صالحًا؛ تم تجاهله")
+                providers = []
+
+            for item in providers if isinstance(providers, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                base = item.get("base_url")
+                model = item.get("model")
+                key = item.get("api_key")
+                if not key and item.get("api_key_env"):
+                    key = os.environ.get(str(item["api_key_env"]))
+                if not (base and model and key):
+                    continue
+                try:
+                    candidates.append({
+                        "client": OpenAI(api_key=key, base_url=base),
+                        "model": model,
+                        "label": f"{model} @ {base}",
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("تعذر تهيئة مزوّد بديل %s: %s", base, exc)
+
+        logger.info(
+            "مرشّحو النموذج (%s): %s",
+            len(candidates),
+            ", ".join(c["label"] for c in candidates),
+        )
+        return candidates
+
+    def _current_candidate(self) -> Dict[str, Any]:
+        index = min(self._candidate_index, len(self._candidates) - 1)
+        return self._candidates[index]
+
+    def _advance_candidate(self, reason: str) -> bool:
+        """ينتقل للمرشّح التالي؛ يعيد False إذا لم يبقَ بديل."""
+        if self._candidate_index >= len(self._candidates) - 1:
+            logger.error("لا يوجد نموذج بديل بعد: %s", reason)
+            return False
+        self._candidate_index += 1
+        nxt = self._current_candidate()
+        logger.warning("التحويل إلى %s بسبب: %s", nxt["label"], reason[:160])
+        return True
+
     def _create_completion(
         self,
         *,
@@ -129,16 +260,18 @@ class LLMClient:
     ) -> Any:
         """Send one raw Chat Completions request through the compatibility layer."""
 
-        # بعض المزوّدين (مثل Groq في الطبقة المجانية) يحدّون عدد الرموز في
-        # الدقيقة (TPM) ويرفضون الطلب بـ413/429. ننتظر انتهاء نافذة الدقيقة
-        # ونعيد المحاولة بدل إسقاط التقرير كاملًا.
+        # المزوّدون المجانيون يقيّدون الطلبات: حدّ في الدقيقة (TPM) وحدّ يومي
+        # (TPD) لكل نموذج. لذلك: ننتظر عند الحدّ اللحظي، وننتقل تلقائيًا إلى
+        # نموذج أو مزوّد بديل عند نفاد الحصة اليومية، بدل إسقاط التقرير.
         attempts = 0
+        rotations = 0
         guard_messages: List[Dict[str, str]] = []
         while True:
+            candidate = self._current_candidate()
             try:
                 return create_chat_completion(
-                    self.client,
-                    model=self.model,
+                    candidate["client"],
+                    model=candidate["model"],
                     messages=[*messages, *guard_messages],
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -146,10 +279,12 @@ class LLMClient:
                 )
             except Exception as exc:  # noqa: BLE001 - نفحص نوع الخطأ من نصه
                 detail = str(exc)
+                lowered = detail.lower()
+
                 tool_call_conflict = (
                     "called a tool" in detail
                     or "tool_choice" in detail
-                    or "tool call" in detail.lower()
+                    or "tool call" in lowered
                 )
                 if tool_call_conflict and attempts < 2:
                     attempts += 1
@@ -159,23 +294,46 @@ class LLMClient:
                     )
                     guard_messages = [{"role": "system", "content": TOOL_GUARD_MESSAGE}]
                     continue
-                limited = any(
-                    token in detail
-                    for token in (
-                        " 413", "413 ", "429", "tokens per minute", "TPM",
-                        "rate limit", "Rate limit", "RATE_LIMIT",
-                    )
-                )
-                if not limited or attempts >= 2:
+
+                if _is_daily_quota_error(exc) and rotations < len(self._candidates) + 2:
+                    rotations += 1
+                    if self._advance_candidate(detail):
+                        attempts = 0
+                        guard_messages = []
+                        continue
                     raise
-                attempts += 1
-                wait_seconds = 62 if ("413" in detail or "tokens per minute" in detail) else 20
-                logger.warning(
-                    "حدّ معدّل الطلبات من المزوّد؛ إعادة المحاولة بعد %s ثانية (محاولة %s)",
-                    wait_seconds,
-                    attempts,
-                )
-                time.sleep(wait_seconds)
+
+                if _is_model_missing_error(exc) and rotations < len(self._candidates) + 2:
+                    rotations += 1
+                    if self._advance_candidate(detail):
+                        attempts = 0
+                        guard_messages = []
+                        continue
+                    raise
+
+                if _is_rate_limit_error(exc):
+                    if attempts < 2:
+                        attempts += 1
+                        wait_seconds = (
+                            62
+                            if ("413" in detail or "tokens per minute" in lowered)
+                            else 20
+                        )
+                        logger.warning(
+                            "حدّ معدّل الطلبات من المزوّد؛ إعادة المحاولة بعد %s ثانية (محاولة %s)",
+                            wait_seconds,
+                            attempts,
+                        )
+                        time.sleep(wait_seconds)
+                        continue
+                    if rotations < len(self._candidates) + 2 and self._advance_candidate(detail):
+                        rotations += 1
+                        attempts = 0
+                        guard_messages = []
+                        continue
+                    raise
+
+                raise
     
     def chat(
         self,

@@ -41,6 +41,14 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+
+    # نماذج بديلة على نفس المزوّد تُستخدم تلقائيًا عند نفاد الحصة اليومية
+    # (كل نموذج على Groq له حصة يومية منفصلة، فتناوب النماذج يضاعف السعة مجانًا).
+    LLM_FALLBACK_MODELS = os.environ.get('LLM_FALLBACK_MODELS', '')
+
+    # مزوّدون بديلون (OpenAI-compatible) على شكل JSON، مثال:
+    # [{"base_url":"https://api.cerebras.ai/v1","model":"gpt-oss-120b","api_key_env":"CEREBRAS_API_KEY"}]
+    LLM_FALLBACK_PROVIDERS = os.environ.get('LLM_FALLBACK_PROVIDERS', '')
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
