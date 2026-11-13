@@ -42,6 +42,17 @@
 
     <!-- Main Content Area -->
     <main class="content-area">
+      <!-- تنبيه: لم نجد الملفات المختارة بعد تحديث الصفحة -->
+      <div v-if="needsNewUpload" class="needs-upload-banner" dir="rtl">
+        <span class="needs-upload-icon">⚠</span>
+        <div class="needs-upload-text">
+          <strong>لم نجد الملف الذي اخترته.</strong>
+          <span>الملف يُحفظ مؤقتًا في هذه الصفحة فقط، ويُفقد إذا أُعيد تحميل الصفحة أو رجعت للخلف أثناء الرفع.
+            ارجع إلى الصفحة الرئيسية واختر الملف من جديد، ولا تُحدّث الصفحة أثناء الرفع.</span>
+        </div>
+        <button class="needs-upload-btn" @click="router.push('/')">العودة إلى الصفحة الرئيسية</button>
+      </div>
+
       <!-- Left Panel: Graph -->
       <div class="panel-wrapper left" :class="{ 'mobile-hidden': viewMode === 'workbench' }" :style="leftPanelStyle">
         <GraphPanel 
@@ -113,6 +124,7 @@ const currentProjectId = ref(route.params.projectId)
 const loading = ref(false)
 const graphLoading = ref(false)
 const error = ref('')
+const needsNewUpload = ref(false)
 const projectData = ref(null)
 const graphData = ref(null)
 const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
@@ -204,13 +216,15 @@ const initProject = async () => {
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
+    error.value = 'لم يتم العثور على الملفات المختارة، يرجى إعادة اختيارها من الصفحة الرئيسية'
+    needsNewUpload.value = true
     addLog('Error: No pending files found for new project.')
     return
   }
   
   try {
     loading.value = true
+    needsNewUpload.value = false
     currentPhase.value = 0
     ontologyProgress.value = { message: 'Uploading and analyzing docs...' }
     addLog('Starting ontology generation: Uploading files...')
@@ -540,6 +554,36 @@ onUnmounted(() => {
 .status-indicator.processing .dot { background: #FF5722; animation: pulse 1s infinite; }
 .status-indicator.completed .dot { background: #4CAF50; }
 .status-indicator.error .dot { background: #F44336; }
+
+/* تنبيه الملفات المفقودة */
+.needs-upload-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 12px 16px 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(244, 67, 54, .35);
+  background: rgba(244, 67, 54, .08);
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+}
+.needs-upload-icon { font-size: 20px; color: #F44336; }
+.needs-upload-text { flex: 1 1 260px; display: flex; flex-direction: column; gap: 4px; }
+.needs-upload-text strong { font-weight: 700; }
+.needs-upload-btn {
+  border: none;
+  cursor: pointer;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 14px;
+  color: #fff;
+  background: #FF4500;
+}
+.needs-upload-btn:hover { filter: brightness(1.08); }
 
 @keyframes pulse { 50% { opacity: 0.5; } }
 
