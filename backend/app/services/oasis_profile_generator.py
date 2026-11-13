@@ -223,10 +223,7 @@ class OasisProfileGenerator:
     ]
     
     # 常见国家列表
-    COUNTRIES = [
-        "China", "US", "UK", "Japan", "Germany", "France", 
-        "Canada", "Australia", "Brazil", "India", "South Korea"
-    ]
+    COUNTRIES = ["السودان"]
     
     # 个人类型实体（需要生成具体人设）
     INDIVIDUAL_ENTITY_TYPES = [
@@ -889,72 +886,94 @@ class OasisProfileGenerator:
         entity_summary: str,
         entity_attributes: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """使用规则生成基础人设"""
-        
-        # 根据实体类型生成不同的人设
-        entity_type_lower = entity_type.lower()
-        
-        if entity_type_lower in ["student", "alumni"]:
+        """توليد شخصية أساسية بقواعد ثابتة عندما يتعذر على النموذج توليدها.
+
+        كل النصوص عربية، والدولة السودان، حتى لا تظهر كلمات صينية أو إنجليزية
+        في واجهة المستخدم عند فشل المزوّد أو نفاد الحصة.
+        """
+        entity_type_lower = (entity_type or "").lower()
+        summary = (entity_summary or "").strip()
+
+        if entity_type_lower in ["student", "alumni", "passenger"]:
             return {
-                "bio": f"{entity_type} with interests in academics and social issues.",
-                "persona": f"{entity_name} is a {entity_type.lower()} who is actively engaged in academic and social discussions. They enjoy sharing perspectives and connecting with peers.",
+                "bio": f"حساب {entity_name}: مهتم بالدراسة والتنقل اليومي وقضايا المجتمع.",
+                "persona": (
+                    f"{entity_name} شخص من فئة {entity_type}، يشارك بفاعلية في النقاشات العامة "
+                    "ويتابع أخبار المدينة والخدمات اليومية، وينشر تجاربه مع المواصلات والأسعار "
+                    "ويتبادل الآراء مع أقرانه في مجموعات الأحياء."
+                ),
                 "age": random.randint(18, 30),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
-                "profession": "Student",
-                "interested_topics": ["Education", "Social Issues", "Technology"],
+                "country": "السودان",
+                "profession": "طالب",
+                "interested_topics": ["التعليم", "المواصلات", "شؤون المجتمع"],
             }
-        
-        elif entity_type_lower in ["publicfigure", "expert", "faculty"]:
+
+        if entity_type_lower in ["publicfigure", "expert", "faculty"]:
             return {
-                "bio": f"Expert and thought leader in their field.",
-                "persona": f"{entity_name} is a recognized {entity_type.lower()} who shares insights and opinions on important matters. They are known for their expertise and influence in public discourse.",
+                "bio": "خبير وصاحب رأي في مجاله، يشارك تحليلاته وتقييمه للشأن العام.",
+                "persona": (
+                    f"{entity_name} من نوع {entity_type}، معروف بخبرته ورأيه المؤثر في النقاش العام. "
+                    "يقدّم تحليلات هادئة ويستند إلى الأرقام والتجارب المحلية، ويُستشهد برأيه "
+                    "عند تقييم الخدمات والأسعار وسياسات التنظيم."
+                ),
                 "age": random.randint(35, 60),
                 "gender": random.choice(["male", "female"]),
                 "mbti": random.choice(["ENTJ", "INTJ", "ENTP", "INTP"]),
-                "country": random.choice(self.COUNTRIES),
-                "profession": entity_attributes.get("occupation", "Expert"),
-                "interested_topics": ["Politics", "Economics", "Culture & Society"],
+                "country": "السودان",
+                "profession": entity_attributes.get("occupation") or "خبير",
+                "interested_topics": ["الاقتصاد", "السياسات العامة", "المجتمع"],
             }
-        
-        elif entity_type_lower in ["mediaoutlet", "socialmediaplatform"]:
+
+        if entity_type_lower in ["mediaoutlet", "socialmediaplatform"]:
             return {
-                "bio": f"Official account for {entity_name}. News and updates.",
-                "persona": f"{entity_name} is a media entity that reports news and facilitates public discourse. The account shares timely updates and engages with the audience on current events.",
-                "age": 30,  # 机构虚拟年龄
-                "gender": "other",  # 机构使用other
-                "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
-                "profession": "Media",
-                "interested_topics": ["General News", "Current Events", "Public Affairs"],
+                "bio": f"الحساب الرسمي لـ {entity_name} — أخبار وتحديثات محلية.",
+                "persona": (
+                    f"{entity_name} وسيلة إعلام محلية تنقل الأخبار وتفتح النقاش العام. "
+                    "تنشر التحديثات العاجلة وتستضيف آراء السائقين والركاب والجهات الرسمية، "
+                    "وتُعنى بأخبار المدينة والخدمات والأسعار، وتتحرى الدقة قبل النشر."
+                ),
+                "age": 30,
+                "gender": "other",
+                "mbti": "ISTJ",
+                "country": "السودان",
+                "profession": "إعلام محلي",
+                "interested_topics": ["أخبار محلية", "الشأن العام", "الخدمات والمواصلات"],
             }
-        
-        elif entity_type_lower in ["university", "governmentagency", "ngo", "organization"]:
+
+        if entity_type_lower in ["university", "governmentagency", "ngo", "organization",
+                                 "localauthority", "driverassociation", "paymentprovider",
+                                 "telecomprovider", "company", "vehicleowner"]:
             return {
-                "bio": f"Official account of {entity_name}.",
-                "persona": f"{entity_name} is an institutional entity that communicates official positions, announcements, and engages with stakeholders on relevant matters.",
-                "age": 30,  # 机构虚拟年龄
-                "gender": "other",  # 机构使用other
-                "mbti": "ISTJ",  # 机构风格：严谨保守
-                "country": "中国",
+                "bio": f"الحساب الرسمي لـ {entity_name}.",
+                "persona": (
+                    f"{entity_name} جهة من نوع {entity_type}، تتواصل ببيانات رسمية ومواقف معلنة "
+                    "حيال الموضوع، وتتعامل مع الجدل بالتوضيح والتنظيم. تتحفظ في التفاصيل غير المؤكدة، "
+                    "وتحرص على مصالح منتسبيها وسمعتها أمام الجمهور والجهات المحلية."
+                ),
+                "age": 30,
+                "gender": "other",
+                "mbti": "ISTJ",
+                "country": "السودان",
                 "profession": entity_type,
-                "interested_topics": ["Public Policy", "Community", "Official Announcements"],
+                "interested_topics": ["السياسات العامة", "المجتمع", "البيانات الرسمية"],
             }
-        
-        else:
-            # 默认人设
-            return {
-                "bio": entity_summary[:150] if entity_summary else f"{entity_type}: {entity_name}",
-                "persona": entity_summary or f"{entity_name} is a {entity_type.lower()} participating in social discussions.",
-                "age": random.randint(25, 50),
-                "gender": random.choice(["male", "female"]),
-                "mbti": random.choice(self.MBTI_TYPES),
-                "country": random.choice(self.COUNTRIES),
-                "profession": entity_type,
-                "interested_topics": ["General", "Social Issues"],
-            }
-    
+
+        return {
+            "bio": summary[:150] if summary else f"{entity_type}: {entity_name}",
+            "persona": summary or (
+                f"{entity_name} من نوع {entity_type}، يشارك في النقاش العام حول الموضوع "
+                "ويبدي رأيه بحسب تجربته المباشرة ومصلحته."
+            ),
+            "age": random.randint(25, 50),
+            "gender": random.choice(["male", "female"]),
+            "mbti": random.choice(self.MBTI_TYPES),
+            "country": "السودان",
+            "profession": entity_type,
+            "interested_topics": ["الشأن العام", "قضايا المجتمع"],
+        }
+
     def set_graph_id(self, graph_id: str):
         """设置图谱ID用于Zep检索"""
         self.graph_id = graph_id
