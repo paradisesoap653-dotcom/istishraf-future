@@ -301,6 +301,18 @@ def run_serverless_simulation(
         ]
 
     counts = write_simulation_artifacts(sim_dir, profiles, rounds_data, platforms)
+
+    # احفظ مخرجات المحاكاة في التخزين الدائم فورًا، فالقرص المؤقت يُفقد بعد
+    # انتهاء الطلب على Vercel، وحينها لا يجد مولّد التقرير أي وقائع للمحاكاة.
+    from .simulation_runner import persist_file
+
+    for plat in platforms:
+        for relative in (os.path.join(plat, "actions.jsonl"), f"{plat}_simulation.db"):
+            try:
+                persist_file(os.path.join(sim_dir, relative))
+            except Exception as exc:  # pragma: no cover
+                logger.warning(f"تعذر حفظ مخرجات المحاكاة: {relative} ({exc})")
+
     return {
         "rounds_completed": len(rounds_data),
         "twitter_actions": counts.get("twitter", 0),

@@ -2191,6 +2191,7 @@ def get_simulation_posts(simulation_id: str):
 
         db_file = f"{platform}_simulation.db"
         db_path = os.path.join(sim_dir, db_file)
+        _restore(db_path)
         
         if not os.path.exists(db_path):
             return jsonify({
@@ -2265,6 +2266,7 @@ def get_simulation_comments(simulation_id: str):
         sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
         
         db_path = os.path.join(sim_dir, f"{platform}_simulation.db")
+        _restore(db_path)
         
         if not os.path.exists(db_path):
             return jsonify({

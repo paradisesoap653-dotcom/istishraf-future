@@ -1194,6 +1194,7 @@ class SimulationRunner:
             agent_id: 过滤 Agent ID
             round_num: 过滤轮次
         """
+        file_path = ensure_local_file(file_path)
         if not os.path.exists(file_path):
             return []
         
