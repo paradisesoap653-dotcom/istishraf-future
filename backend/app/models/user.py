@@ -209,6 +209,8 @@ class _SqliteUserStore:
     @classmethod
     def can_access(cls, resource_type: str, resource_id: str, user: Optional[Dict[str, Any]]) -> bool:
         owner_id = cls.get_owner_id(resource_type, resource_id)
+        if owner_id is None:
+            owner_id = _inherited_owner_id(resource_type, resource_id)
         # Public / sample resources (no owner_id) are accessible to all users
         if owner_id is None:
             return True
@@ -437,6 +439,8 @@ class _PgUserStore:
     def can_access(cls, resource_type: str, resource_id: str, user: Optional[Dict[str, Any]]) -> bool:
         owner_id = cls.get_owner_id(resource_type, resource_id)
         if owner_id is None:
+            owner_id = _inherited_owner_id(resource_type, resource_id)
+        if owner_id is None:
             return True
         if not user:
             return False
@@ -503,3 +507,24 @@ def get_current_user() -> Optional[Dict[str, Any]]:
         token = auth_header[7:].strip()
         return verify_auth_token(token)
     return None
+
+
+def _inherited_owner_id(resource_type: str, resource_id: str) -> Optional[int]:
+    """مالك موروث للموارد التي لا سجل ملكية لها.
+
+    التقارير أُنشئت قبل تسجيل الملكية، فتستمد مالكها من محاكاتها حتى لا تبقى
+    ظاهرة لكل المستخدمين. لا تُكتب أي بيانات: مجرد قراءة.
+    """
+    if resource_type != "report":
+        return None
+    try:
+        from ..services.report_agent import ReportManager
+
+        report = ReportManager.get_report(resource_id)
+        simulation_id = getattr(report, "simulation_id", None) if report else None
+        if not simulation_id:
+            return None
+        owner = UserStore.get_owner_id("simulation", str(simulation_id))
+        return int(owner) if owner is not None else None
+    except Exception:
+        return None

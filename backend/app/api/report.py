@@ -157,6 +157,18 @@ def generate_report():
         # 提前生成 report_id，以便立即返回给前端
         import uuid
         report_id = f"report_{uuid.uuid4().hex[:12]}"
+
+        # ملكية التقرير تُسجَّل فور إنشائه: يورث مالك المحاكاة أو صاحب الطلب
+        try:
+            from ..models.user import UserStore as _Owners, get_current_user as _who
+
+            _owner = (_who() or {}).get("id") or _Owners.get_owner_id(
+                "simulation", simulation_id
+            )
+            if _owner:
+                _Owners.assign_owner("report", report_id, int(_owner))
+        except Exception:
+            pass
         
         # Register the background report as a graph reader under the same lock
         # used by graph deletion and updater startup. A lock itself cannot be
@@ -508,7 +520,13 @@ def list_reports():
             simulation_id=simulation_id,
             limit=limit
         )
-        
+
+        # عزل بين المستخدمين: لا تُعاد إلا تقارير صاحب الطلب
+        from ..models.user import get_current_user as _current_user
+        from .guards import filter_owned as _filter_owned
+
+        reports = _filter_owned(reports, "report", "report_id", _current_user())
+
         return jsonify({
             "success": True,
             "data": [r.to_dict() for r in reports],

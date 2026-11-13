@@ -835,7 +835,15 @@ def list_simulations():
         
         manager = SimulationManager()
         simulations = manager.list_simulations(project_id=project_id)
-        
+
+        # عزل بين المستخدمين: لا تُعاد إلا محاكاات صاحب الطلب
+        from ..models.user import get_current_user as _current_user
+        from .guards import filter_owned as _filter_owned
+
+        simulations = _filter_owned(
+            simulations, "simulation", "simulation_id", _current_user()
+        )
+
         return jsonify({
             "success": True,
             "data": [s.to_dict() for s in simulations],

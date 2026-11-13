@@ -170,7 +170,13 @@ def list_projects():
     """
     limit = request.args.get('limit', 50, type=int)
     projects = ProjectManager.list_projects(limit=limit)
-    
+
+    # عزل بين المستخدمين: لا تُعاد إلا مشاريع صاحب الطلب
+    from ..models.user import get_current_user as _current_user
+    from .guards import filter_owned as _filter_owned
+
+    projects = _filter_owned(projects, "project", "project_id", _current_user())
+
     return jsonify({
         "success": True,
         "data": [p.to_dict() for p in projects],
@@ -672,7 +678,16 @@ def _build_graph_impl():
         
         # 创建异步任务
         task_manager = TaskManager()
-        task_id = task_manager.create_task(f"构建图谱: {graph_name}")
+        try:
+            from ..models.user import get_current_user
+            _owner = get_current_user()
+            _owner_id = _owner["id"] if _owner else None
+        except Exception:
+            _owner_id = None
+        task_id = task_manager.create_task(
+            f"构建图谱: {graph_name}",
+            metadata={"owner_user_id": _owner_id},
+        )
         logger.info(f"创建图谱构建任务: task_id={task_id}, project_id={project_id}")
         
         # 更新项目状态
@@ -795,7 +810,16 @@ def get_task(task_id: str):
     查询任务状态
     """
     task = TaskManager().get_task(task_id)
-    
+
+    # لا يقرأ المستخدم مهمة غيره: تُعامَل كغير موجودة
+    if task:
+        from ..models.user import get_current_user as _current_user
+        _user = _current_user()
+        if not _user or _user.get("role") != "admin":
+            _owner_id = (getattr(task, "metadata", None) or {}).get("owner_user_id")
+            if _owner_id is None or int(_owner_id) != int(_user["id"]):
+                task = None
+
     if not task:
         return jsonify({
             "success": False,
@@ -814,7 +838,18 @@ def list_tasks():
     列出所有任务
     """
     tasks = TaskManager().list_tasks()
-    
+
+    # لا تُكشف مهام المستخدمين الآخرين
+    from ..models.user import get_current_user as _current_user
+    user = _current_user()
+    if not user or user.get("role") != "admin":
+        uid = int(user["id"]) if user else None
+        tasks = [
+            t for t in tasks
+            if uid is not None
+            and int((t.get("metadata") or {}).get("owner_user_id") or -1) == uid
+        ]
+
     return jsonify({
         "success": True,
         "data": tasks,

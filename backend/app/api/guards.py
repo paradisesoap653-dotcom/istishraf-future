@@ -88,6 +88,11 @@ def _user_can_access(user: dict, values: dict) -> bool:
         if _is_demo_id(resource_id):
             continue
         owner_id = UserStore.get_owner_id(resource_type, resource_id)
+        if owner_id is None:
+            # تقرير قديم بلا سجل ملكية يرث مالك محاكاته
+            from ..models.user import _inherited_owner_id
+
+            owner_id = _inherited_owner_id(resource_type, resource_id)
         # مورد بلا سجل ملكية = مورد عام/قديم؛ يبقى السلوك كما هو (متاح)،
         # لكن كل مورد يُنشأ بعد هذا الإصلاح يُسجّل مالكه.
         if owner_id is None:
@@ -147,3 +152,29 @@ def install_api_guards(*blueprints) -> None:
     """تثبيت الحراسة على أزرقيات الـAPI دفعة واحدة."""
     for blueprint in blueprints:
         blueprint.before_request(guard_api_request)
+
+
+def filter_owned(items, resource_type: str, id_key: str, user) -> list:
+    """احتفظ فقط بالموارد التي يملكها المستخدم (أو موارد عامة بلا مالك).
+
+    تُستخدم في مسارات القوائم التي كانت تُرجع كل موارد كل المستخدمين.
+    """
+    from ..models.user import UserStore as _Users
+
+    if not user:
+        return []
+    if user.get("role") == "admin":
+        return list(items)
+
+    kept = []
+    for item in items:
+        if isinstance(item, dict):
+            resource_id = item.get(id_key)
+        else:
+            resource_id = getattr(item, id_key, None)
+        if not resource_id:
+            kept.append(item)
+            continue
+        if _Users.can_access(resource_type, str(resource_id), user):
+            kept.append(item)
+    return kept
