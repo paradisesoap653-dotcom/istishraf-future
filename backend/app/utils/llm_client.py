@@ -357,8 +357,40 @@ class LLMClient:
                         "النموذج نادى أداة مدمجة رغم عدم تمرير أدوات؛ إعادة المحاولة مع تذكير (%s)",
                         attempts,
                     )
-                    guard_messages = [{"role": "system", "content": TOOL_GUARD_MESSAGE}]
+                    # نضع التذكير في رسالة النظام الأولى نفسها: بعض النماذج
+                    # (gpt-oss) ترفض رسالة system في نهاية المحادثة.
+                    merged = [dict(m) for m in messages]
+                    if merged and merged[0].get("role") == "system":
+                        merged[0]["content"] = f"{merged[0]['content']}\n\n{TOOL_GUARD_MESSAGE}"
+                        guard_messages = []
+                        messages_to_send = merged
+                    else:
+                        guard_messages = [{"role": "user", "content": TOOL_GUARD_MESSAGE}]
+                        messages_to_send = None
+                    if messages_to_send is not None:
+                        # إعادة المحاولة فورًا بنسخة معدّلة
+                        try:
+                            return create_chat_completion(
+                                candidate["client"],
+                                model=candidate["model"],
+                                messages=merged,
+                                temperature=temperature,
+                                max_tokens=max_tokens,
+                                response_format=response_format,
+                                extra=candidate.get("extra"),
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
                     continue
+
+                if tool_call_conflict and rotations < len(self._candidates) + 2:
+                    # النموذج يصرّ على نداء أدوات مدمجة → ننتقل إلى نموذج/مزوّد آخر
+                    rotations += 1
+                    if self._advance_candidate(detail):
+                        attempts = 0
+                        guard_messages = []
+                        continue
+                    raise
 
                 if _is_daily_quota_error(exc) and rotations < len(self._candidates) + 2:
                     rotations += 1
