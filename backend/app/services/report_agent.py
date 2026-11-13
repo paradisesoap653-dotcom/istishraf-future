@@ -587,7 +587,7 @@ PLAN_SYSTEM_PROMPT = """\
     ]
 }
 
-注意：sections数组最少2个，最多5个元素！"""
+注意：必须恰好输出 3 个章节（不多不少），以便控制生成成本！"""
 
 PLAN_USER_PROMPT_TEMPLATE = """\
 【预测场景设定】
@@ -880,7 +880,7 @@ class ReportAgent:
     """
     
     # 最大工具调用次数（每个章节）
-    MAX_TOOL_CALLS_PER_SECTION = 5
+    MAX_TOOL_CALLS_PER_SECTION = 2
     
     # 最大反思轮数
     MAX_REFLECTION_ROUNDS = 3
@@ -1311,9 +1311,9 @@ class ReportAgent:
         if previous_sections:
             previous_parts = []
             for sec in previous_sections:
-                truncated = sec[:700] + "..." if len(sec) > 700 else sec
+                truncated = sec[:350] + "..." if len(sec) > 350 else sec
                 previous_parts.append(truncated)
-            previous_content = "\n\n---\n\n".join(previous_parts)[:1600]
+            previous_content = "\n\n---\n\n".join(previous_parts)[:800]
         else:
             previous_content = "（这是第一个章节）"
         
@@ -1329,8 +1329,8 @@ class ReportAgent:
         
         # ReACT循环
         tool_calls_count = 0
-        max_iterations = 5  # 最大迭代轮数
-        min_tool_calls = 3  # 最少工具调用次数
+        max_iterations = 4  # 最大迭代轮数 (خُفِّض لتوفير الحصة اليومية)
+        min_tool_calls = 1  # 最少工具调用次数
         conflict_retries = 0  # 工具调用与Final Answer同时出现的连续冲突次数
         used_tools = set()  # 记录已调用过的工具名
         all_tools = {"insight_forge", "panorama_search", "quick_search", "interview_agents"}
@@ -1350,7 +1350,7 @@ class ReportAgent:
             response = self.llm.chat(
                 messages=_limit_request_size(messages),
                 temperature=0.5,
-                max_tokens=2048
+                max_tokens=1400
             )
 
             # 检查 LLM 返回是否为 None（API 异常或内容为空）
@@ -1507,7 +1507,7 @@ class ReportAgent:
                     "role": "user",
                     "content": REACT_OBSERVATION_TEMPLATE.format(
                         tool_name=call["name"],
-                        result=(result[:2500] + "\n… (اقتُصرت النتيجة لتجاوز حدّ الطلب)" if len(result) > 2500 else result),
+                        result=(result[:1200] + "\n… (اقتُصرت النتيجة لتجاوز حدّ الطلب)" if len(result) > 1200 else result),
                         tool_calls_count=tool_calls_count,
                         max_tool_calls=self.MAX_TOOL_CALLS_PER_SECTION,
                         used_tools_str=", ".join(used_tools),
@@ -1556,7 +1556,7 @@ class ReportAgent:
         response = self.llm.chat(
             messages=_limit_request_size(messages),
             temperature=0.5,
-            max_tokens=2048
+            max_tokens=1400
         )
 
         # 检查强制收尾时 LLM 返回是否为 None
@@ -1623,6 +1623,7 @@ class ReportAgent:
         
         # 已完成的章节标题列表（用于进度追踪）
         completed_section_titles = []
+        outline = None
         
         try:
             # 初始化：创建报告文件夹并保存初始状态
@@ -1789,6 +1790,33 @@ class ReportAgent:
             
         except Exception as e:
             logger.error(t('report.reportGenFailed', error=str(e)))
+            friendly = ReportAgent._friendly_error_message(e)
+
+            # إن أنجزنا قسمًا واحدًا على الأقل، نحفظ ما تم توليده كتقرير جزئي
+            # بدل أن يضيع العمل ويظهر للمستخدم خطأ فقط.
+            try:
+                partial_ok = bool(completed_section_titles) and outline is not None
+                if partial_ok:
+                    report.markdown_content = ReportManager.assemble_full_report(report_id, outline)
+                    if report.markdown_content and report.markdown_content.strip():
+                        report.status = ReportStatus.COMPLETED
+                        report.error = friendly
+                        report.completed_at = datetime.now().isoformat()
+                        if self.report_logger:
+                            self.report_logger.log_error(str(e), "partial")
+                        ReportManager.save_report(report)
+                        ReportManager.update_progress(
+                            report_id, "completed", 100,
+                            f"تقرير جزئي: أُنجز {len(completed_section_titles)} قسمًا قبل توقف المزوّد. {friendly}",
+                            completed_sections=completed_section_titles
+                        )
+                        if self.console_logger:
+                            self.console_logger.close()
+                            self.console_logger = None
+                        return report
+            except Exception as partial_exc:  # noqa: BLE001
+                logger.warning("تعذر حفظ التقرير الجزئي: %s", partial_exc)
+
             report.status = ReportStatus.FAILED
             report.error = str(e)
             
@@ -1800,7 +1828,7 @@ class ReportAgent:
             try:
                 ReportManager.save_report(report)
                 ReportManager.update_progress(
-                    report_id, "failed", -1, t('progress.reportFailed', error=str(e)),
+                    report_id, "failed", -1, "فشل توليد التقرير: " + friendly,
                     completed_sections=completed_section_titles
                 )
             except Exception:
@@ -1813,6 +1841,29 @@ class ReportAgent:
             
             return report
     
+    @staticmethod
+    def _friendly_error_message(error: Exception) -> str:
+        """ترجمة أخطاء المزوّد التقنية إلى رسالة عربية مفهومة للمستخدم."""
+        detail = str(error)
+        low = detail.lower()
+        if "tokens per day" in low or " tpd" in low or "(tpd)" in low:
+            return (
+                "انتهت الحصة اليومية المجانية لنموذج الذكاء الاصطناعي. "
+                "تتجدد تلقائيًا بعد نحو ساعة، أو يمكن ترقية حساب Groq لتوليد التقارير بلا حد يومي."
+            )
+        if "tokens per minute" in low or " tpm" in low or "413" in low:
+            return (
+                "طلب التوليد أكبر من حد النموذج اللحظي. جرّب مرة أخرى بعد دقيقة تقريبًا."
+            )
+        if "called a tool" in low or "tool_choice" in low:
+            return (
+                "النموذج حاول استدعاء أداة غير متاحة، وأُعيدت المحاولة تلقائيًا. "
+                "إن تكرر ذلك فجرّب التوليد مرة أخرى."
+            )
+        if "rate limit" in low or "429" in low:
+            return "عدد الطلبات كبير حاليًا. انتظر دقيقة ثم جرّب مرة أخرى."
+        return detail[:400]
+
     def chat(
         self, 
         message: str,
