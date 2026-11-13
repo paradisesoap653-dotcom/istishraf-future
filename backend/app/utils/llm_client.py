@@ -103,8 +103,8 @@ def _contains_additional_json_container(content: str) -> bool:
 # لا تحتوي هذه القائمة أي سر: المفاتيح تُقرأ من متغيّرات البيئة بالاسم فقط.
 BUILTIN_FALLBACK_PROVIDERS = [
     # Google AI Studio: طبقة مجانية دائمة بلا بطاقة (والسودان ضمن الدول المدعومة)
-    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-flash-latest", "api_key_env": "GEMINI_API_KEY"},
-    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.6-flash", "api_key_env": "GEMINI_API_KEY", "extra": {"reasoning_effort": "low"}},
     # NVIDIA NIM: طبقة مجانية بلا بطاقة
     {"base_url": "https://integrate.api.nvidia.com/v1", "model": "openai/gpt-oss-120b", "api_key_env": "NVIDIA_API_KEY"},
     {"base_url": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.3-70b-instruct", "api_key_env": "NVIDIA_API_KEY"},
@@ -129,7 +129,7 @@ def describe_fallback_providers() -> List[Dict[str, Any]]:
     return described
 
 
-def probe_providers(limit: int = 3, timeout: float = 20.0) -> List[Dict[str, Any]]:
+def probe_providers(limit: int = 3, timeout: float = 60.0) -> List[Dict[str, Any]]:
     """اختبار حقيقي (بلا كشف المفتاح) لكل مزوّد بديل له مفتاح في البيئة."""
     results: List[Dict[str, Any]] = []
     for item in BUILTIN_FALLBACK_PROVIDERS:
@@ -142,8 +142,9 @@ def probe_providers(limit: int = 3, timeout: float = 20.0) -> List[Dict[str, Any
             response = create_chat_completion(
                 client,
                 model=item["model"],
-                messages=[{"role": "user", "content": "قل كلمة: تم"}],
-                max_tokens=8,
+                messages=[{"role": "user", "content": "أجب بكلمة واحدة فقط: تم"}],
+                max_tokens=64,
+                extra=item.get("extra"),
             )
             results.append({
                 "target": label,
@@ -286,6 +287,7 @@ class LLMClient:
                     "client": OpenAI(api_key=key, base_url=base),
                     "model": model,
                     "label": f"{model} @ {base}",
+                    "extra": item.get("extra"),
                 })
             except Exception as exc:  # noqa: BLE001
                 logger.warning("تعذر تهيئة مزوّد بديل %s: %s", base, exc)
@@ -337,6 +339,7 @@ class LLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format=response_format,
+                    extra=candidate.get("extra"),
                 )
             except Exception as exc:  # noqa: BLE001 - نفحص نوع الخطأ من نصه
                 detail = str(exc)
