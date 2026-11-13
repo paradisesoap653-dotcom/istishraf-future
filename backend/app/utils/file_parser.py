@@ -61,7 +61,7 @@ def _read_text_with_fallback(file_path: str) -> str:
 class FileParser:
     """文件解析器"""
     
-    SUPPORTED_EXTENSIONS = {'.pdf', '.md', '.markdown', '.txt'}
+    SUPPORTED_EXTENSIONS = {'.pdf', '.md', '.markdown', '.txt', '.docx', '.csv', '.json'}
     
     @classmethod
     def is_supported(cls, file_path: str) -> bool:
@@ -102,8 +102,10 @@ class FileParser:
             return cls._extract_from_pdf(file_path)
         elif suffix in {'.md', '.markdown'}:
             return cls._extract_from_md(file_path)
-        elif suffix == '.txt':
+        elif suffix in {'.txt', '.csv', '.json'}:
             return cls._extract_from_txt(file_path)
+        elif suffix == '.docx':
+            return cls._extract_from_docx(file_path)
         
         raise ValueError(f"无法处理的文件格式: {suffix}")
     
@@ -133,6 +135,49 @@ class FileParser:
         except ImportError:
             raise ImportError("يرجى تثبيت مكتبة pypdf أو PyMuPDF لقراءة ملفات PDF")
     
+    @staticmethod
+    def _extract_from_docx(file_path: str) -> str:
+        """استخراج النص من ملف Word (.docx) بلا أي مكتبة خارجية.
+
+        ملف docx في حقيقته أرشيف ZIP يحوي ``word/document.xml``؛ نقرأه ونستخرج
+        الفقرات. وإن توفرت python-docx استُخدمت لأنها أدق في الفواصل.
+        """
+        try:
+            import docx  # python-docx إن كانت مثبتة
+
+            document = docx.Document(file_path)
+            paragraphs = [p.text.strip() for p in document.paragraphs if p.text and p.text.strip()]
+            if paragraphs:
+                return "\n\n".join(paragraphs)
+        except Exception:
+            pass
+
+        import re
+        import zipfile
+        from xml.etree import ElementTree
+
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                xml_bytes = archive.read("word/document.xml")
+        except Exception as exc:
+            raise ValueError(f"تعذر قراءة ملف Word: {exc}")
+
+        namespace = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+        try:
+            root = ElementTree.fromstring(xml_bytes)
+        except Exception:
+            # احتياط أخير: اقتلاع النص من XML الخام
+            text = re.sub(r"<[^>]+>", " ", xml_bytes.decode("utf-8", errors="replace"))
+            return re.sub(r"\s+", " ", text).strip()
+
+        lines = []
+        for paragraph in root.iter(f"{namespace}p"):
+            pieces = [node.text or "" for node in paragraph.iter(f"{namespace}t")]
+            line = "".join(pieces).strip()
+            if line:
+                lines.append(line)
+        return "\n\n".join(lines)
+
     @staticmethod
     def _extract_from_md(file_path: str) -> str:
         """从Markdown提取文本，支持自动编码检测"""

@@ -158,7 +158,7 @@
                   ref="fileInput"
                   type="file"
                   multiple
-                  accept=".pdf,.md,.txt"
+                  accept=".pdf,.md,.markdown,.txt,.csv,.json,.docx"
                   @change="handleFileSelect"
                   style="display: none"
                   :disabled="loading"
@@ -177,6 +177,20 @@
                     <button @click.stop="removeFile(index)" class="remove-btn">×</button>
                   </div>
                 </div>
+              </div>
+
+              <div class="source-row">
+                <button type="button" class="paste-source-btn" @click.stop="openPasteModal">
+                  📋 الصق النص كمصدر
+                </button>
+                <span v-if="files.length === 0" class="source-hint">
+                  لم تُضف مصدرًا بعد — اختر ملفًا أو الصق النص
+                </span>
+              </div>
+
+              <div v-if="rejectedFiles.length" class="rejected-box">
+                <span class="rejected-title">لم تُضف هذه الملفات:</span>
+                <span v-for="(r, i) in rejectedFiles" :key="i" class="rejected-item">{{ r }}</span>
               </div>
             </div>
 
@@ -223,6 +237,46 @@
         </div>
       </section>
 
+      <Teleport to="body">
+        <div v-if="showPasteModal" class="paste-backdrop" @click.self="showPasteModal = false">
+          <div class="paste-card" dir="rtl">
+            <div class="paste-header">
+              <div>
+                <h3 class="paste-title">الصق نص المصدر</h3>
+                <p class="paste-subtitle">
+                  الصق هنا وصف المشروع أو الدراسة كاملة. سيُرسل كنص مصدر للمحاكاة بلا حاجة لملف.
+                </p>
+              </div>
+              <button type="button" class="paste-close" @click="showPasteModal = false">×</button>
+            </div>
+            <textarea
+              v-model="pasteText"
+              class="paste-area"
+              rows="12"
+              placeholder="الصق النص هنا…"
+              dir="rtl"
+            ></textarea>
+            <div class="paste-meta">
+              <span>{{ pasteText.trim().length }} حرف</span>
+              <span v-if="pasteText.trim().length > 0 && pasteText.trim().length < 200" class="paste-warn">
+                النص قصير جدًا — أضف تفاصيل أكثر لنتيجة أدق
+              </span>
+            </div>
+            <div class="paste-footer">
+              <button type="button" class="paste-cancel" @click="showPasteModal = false">إلغاء</button>
+              <button
+                type="button"
+                class="paste-confirm"
+                :disabled="pasteText.trim().length < 30"
+                @click="addPastedText"
+              >
+                إضافة كمصدر
+              </button>
+            </div>
+          </div>
+        </div>
+      </Teleport>
+
       <!-- سجل المحاكاة السابقة داخل إطار منظم -->
       <div class="framed-card history-frame-wrapper">
         <HistoryDatabase />
@@ -251,6 +305,9 @@ const formData = ref({
 })
 
 const files = ref([])
+const showPasteModal = ref(false)
+const pasteText = ref('')
+const rejectedFiles = ref([])
 const loading = ref(false)
 const isDragOver = ref(false)
 const fileInput = ref(null)
@@ -258,6 +315,28 @@ const fileInput = ref(null)
 const canSubmit = computed(() => {
   return formData.value.simulationRequirement.trim() !== '' && files.value.length > 0
 })
+
+const openPasteModal = () => {
+  if (loading.value) return
+  showPasteModal.value = true
+}
+
+const addPastedText = () => {
+  const text = pasteText.value.trim()
+  if (text.length < 30) return
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')
+  const name = `نص-ملصق-${stamp}.txt`
+  try {
+    files.value.push(new File([text], name, { type: 'text/plain' }))
+  } catch (err) {
+    // متصفحات قديمة لا تدعم File constructor
+    const blob = new Blob([text], { type: 'text/plain' })
+    blob.name = name
+    files.value.push(blob)
+  }
+  pasteText.value = ''
+  showPasteModal.value = false
+}
 
 const triggerFileInput = () => {
   if (!loading.value) {
@@ -287,12 +366,29 @@ const handleDrop = (e) => {
   addFiles(droppedFiles)
 }
 
+// حد الرفع في Vercel نحو 4.5 ميجابايت؛ نتحقق قبله برسالة واضحة بدل خطأ صامت
+const MAX_FILE_BYTES = 4 * 1024 * 1024
+const ALLOWED_EXTS = ['pdf', 'md', 'markdown', 'txt', 'csv', 'json', 'docx']
+
 const addFiles = (newFiles) => {
-  const validFiles = newFiles.filter(file => {
-    const ext = file.name.split('.').pop().toLowerCase()
-    return ['pdf', 'md', 'txt'].includes(ext)
+  const rejected = []
+  const validFiles = []
+
+  newFiles.forEach(file => {
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ALLOWED_EXTS.includes(ext)) {
+      rejected.push(`${file.name} — صيغة غير مدعومة (المدعوم: PDF, Word, MD, TXT, CSV)`)
+      return
+    }
+    if (file.size > MAX_FILE_BYTES) {
+      rejected.push(`${file.name} — أكبر من 4 ميجابايت، استخدم «الصق النص كمصدر»`)
+      return
+    }
+    validFiles.push(file)
   })
+
   files.value.push(...validFiles)
+  rejectedFiles.value = rejected
 }
 
 const removeFile = (index) => {
@@ -790,6 +886,177 @@ const startSimulation = () => {
 .upload-zone:hover,
 .upload-zone.drag-over {
   border-color: var(--accent-orange);
+}
+
+.source-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.paste-source-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  border: 1px solid #FF4500;
+  background: rgba(255, 69, 0, 0.08);
+  color: #FF4500;
+  transition: background 0.2s;
+}
+
+.paste-source-btn:hover {
+  background: rgba(255, 69, 0, 0.16);
+}
+
+.source-hint {
+  font-size: 0.72rem;
+  color: var(--text-muted, #94A3B8);
+}
+
+.rejected-box {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #FCA5A5;
+  background: rgba(239, 68, 68, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.rejected-title {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #EF4444;
+}
+
+.rejected-item {
+  font-size: 0.7rem;
+  color: var(--text-secondary, #CBD5E1);
+  line-height: 1.7;
+}
+
+.paste-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  z-index: 4200;
+}
+
+.paste-card {
+  width: 100%;
+  max-width: 620px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--bg-card, #fff);
+  color: var(--text-primary, #0F172A);
+  border: 1px solid var(--border-strong, #E2E8F0);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.4);
+}
+
+.paste-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.paste-title {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.paste-subtitle {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.8;
+  color: var(--text-muted, #64748B);
+}
+
+.paste-close {
+  border: none;
+  background: transparent;
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-muted, #64748B);
+}
+
+.paste-area {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 220px;
+  resize: vertical;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-strong, #CBD5E1);
+  background: var(--bg-subtle, #F8FAFC);
+  color: var(--text-primary, #0F172A);
+  font-family: inherit;
+  font-size: 0.86rem;
+  line-height: 1.9;
+}
+
+.paste-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--text-muted, #64748B);
+}
+
+.paste-warn {
+  color: #F59E0B;
+  font-weight: 700;
+}
+
+.paste-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.paste-cancel,
+.paste-confirm {
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 9px 18px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.paste-cancel {
+  background: transparent;
+  border: 1px solid var(--border-strong, #CBD5E1);
+  color: var(--text-primary, #0F172A);
+}
+
+.paste-confirm {
+  background: #FF4500;
+  border: 1px solid #FF4500;
+  color: #fff;
+}
+
+.paste-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .upload-placeholder {
