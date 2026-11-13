@@ -102,10 +102,16 @@ def _contains_additional_json_container(content: str) -> bool:
 # مزوّدون مجانيون إضافيون يُستخدمون تلقائيًا إذا وُجد مفتاحهم في البيئة.
 # لا تحتوي هذه القائمة أي سر: المفاتيح تُقرأ من متغيّرات البيئة بالاسم فقط.
 BUILTIN_FALLBACK_PROVIDERS = [
-    {"base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "api_key_env": "CEREBRAS_API_KEY"},
-    {"base_url": "https://api.cerebras.ai/v1", "model": "qwen-3-32b", "api_key_env": "CEREBRAS_API_KEY"},
-    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"},
+    # Google AI Studio: طبقة مجانية دائمة بلا بطاقة (والسودان ضمن الدول المدعومة)
     {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-flash-latest", "api_key_env": "GEMINI_API_KEY"},
+    {"base_url": "https://generativelanguage.googleapis.com/v1beta/openai/", "model": "gemini-3.8-flash", "api_key_env": "GEMINI_API_KEY"},
+    # NVIDIA NIM: طبقة مجانية بلا بطاقة
+    {"base_url": "https://integrate.api.nvidia.com/v1", "model": "openai/gpt-oss-120b", "api_key_env": "NVIDIA_API_KEY"},
+    {"base_url": "https://integrate.api.nvidia.com/v1", "model": "meta/llama-3.3-70b-instruct", "api_key_env": "NVIDIA_API_KEY"},
+    # OpenRouter: نماذج :free بلا بطاقة
+    {"base_url": "https://openrouter.ai/api/v1", "model": "openai/gpt-oss-20b:free", "api_key_env": "OPENROUTER_API_KEY"},
+    # Cerebras: لم يبقَ مجانيًا فعليًا (يشترط وسيلة دفع) — يُستخدم فقط إن وُجد مفتاح
+    {"base_url": "https://api.cerebras.ai/v1", "model": "gpt-oss-120b", "api_key_env": "CEREBRAS_API_KEY"},
 ]
 
 
