@@ -140,6 +140,14 @@ def create_app(config_class=Config):
             payload['llm'] = chain
         except Exception:  # pragma: no cover
             pass
+        # فحص اختياري للمزوّدين: /health?llm=1 يرسل طلبًا صغيرًا لكل مزوّد له مفتاح
+        if request.args.get('llm') in ('1', 'true', 'yes'):
+            try:
+                from .utils.llm_client import probe_providers
+
+                payload['llm_probe'] = probe_providers()
+            except Exception as exc:  # pragma: no cover
+                payload['llm_probe'] = [{'ok': False, 'error': str(exc)[:150]}]
         # فحص عميق اختياري: /health?deep=1 يحاول اتصالًا حقيقيًا بقاعدة البيانات
         if request.args.get('deep') in ('1', 'true', 'yes'):
             payload['database'] = 'ok' if storage.check_connection() else 'unavailable'

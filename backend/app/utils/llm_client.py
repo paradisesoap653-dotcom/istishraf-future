@@ -129,6 +129,34 @@ def describe_fallback_providers() -> List[Dict[str, Any]]:
     return described
 
 
+def probe_providers(limit: int = 3, timeout: float = 20.0) -> List[Dict[str, Any]]:
+    """اختبار حقيقي (بلا كشف المفتاح) لكل مزوّد بديل له مفتاح في البيئة."""
+    results: List[Dict[str, Any]] = []
+    for item in BUILTIN_FALLBACK_PROVIDERS:
+        key = os.environ.get(str(item.get("api_key_env") or ""))
+        if not key:
+            continue
+        label = f"{item['model']} @ {item['base_url']}"
+        try:
+            client = OpenAI(api_key=key, base_url=item["base_url"], timeout=timeout)
+            response = create_chat_completion(
+                client,
+                model=item["model"],
+                messages=[{"role": "user", "content": "قل كلمة: تم"}],
+                max_tokens=8,
+            )
+            results.append({
+                "target": label,
+                "ok": True,
+                "reply": (extract_chat_completion_text(response) or "")[:40],
+            })
+        except Exception as exc:  # noqa: BLE001
+            results.append({"target": label, "ok": False, "error": str(exc)[:200]})
+        if len(results) >= limit:
+            break
+    return results
+
+
 def _error_text(error: Exception) -> str:
     """نص الخطأ كاملًا (رسالة + تفاصيل) لتصنيفه بدقة."""
     parts = [str(error)]
