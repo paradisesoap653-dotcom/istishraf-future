@@ -237,6 +237,17 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
   "analysis": "قراءة تحليلية قصيرة (٣ إلى ٥ أسطر) للفرق بين السيناريو والوضع الأصلي"}}"""
 
 
+def _culture_block(config: Dict[str, Any]) -> str:
+    """طبقة الروح السودانية في السيناريو (تُهمَل بهدوء إن تعذّرت)."""
+    try:
+        from . import sudanese_culture
+
+        requirement = (config or {}).get('simulation_requirement') or ''
+        return sudanese_culture.prompt_block(requirement)
+    except Exception:  # noqa: BLE001
+        return ''
+
+
 def _run_llm(simulation_id: str, change: str, rounds: int,
              baseline: Dict[str, Any],
              allowed: Optional[List[str]] = None) -> Dict[str, Any]:
