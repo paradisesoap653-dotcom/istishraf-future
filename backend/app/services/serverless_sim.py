@@ -310,6 +310,15 @@ def run_serverless_simulation(
     platform_header = f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
     if inputs_block:
         platform_header += f"{inputs_block}\n\n"
+    # طبقة «الروح السودانية»: تجعل التعليقات قريبة من الواقع لا فصحى إخبارية
+    try:
+        from . import sudanese_culture
+
+        culture_block = sudanese_culture.prompt_block(requirement)
+        if culture_block:
+            platform_header += f"{culture_block}\n\n"
+    except Exception:  # noqa: BLE001
+        pass
 
     llm = LLMClient()
     prompt = (

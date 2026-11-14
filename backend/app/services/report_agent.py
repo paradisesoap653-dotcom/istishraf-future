@@ -1951,6 +1951,13 @@ class ReportAgent:
         except Exception:  # noqa: BLE001
             pass
 
+        try:
+            from . import sudanese_culture
+
+            parts.append(sudanese_culture.report_block())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر إدراج السياق الثقافي في التقرير: %s", exc)
+
         from . import platform_inputs as platform_inputs_mod
         from . import platforms as platform_registry
 

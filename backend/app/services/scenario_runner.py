@@ -228,6 +228,7 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 {platform_rules}
 - لا تجعل كل الأفعال على منصّة واحدة: استخدم منصّتين على الأقل في كل جولة.
 {inputs_block}
+{culture_block}
 - امزج بين "CREATE_POST" و"CREATE_COMMENT" في كل جولة (لا تجعلها منشورات فقط).
 - استخدم agent_id من قائمة الوكلاء أعلاه فقط.
 
@@ -291,6 +292,7 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
         inputs_block=platform_inputs.prompt_block(
             platform_inputs.load(simulation_id), allowed, rounds * 6
         ) or '',
+        culture_block=_culture_block(config),
     )
 
     llm = LLMClient()

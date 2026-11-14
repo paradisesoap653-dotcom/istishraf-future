@@ -827,7 +827,17 @@ class OasisProfileGenerator:
 - {get_language_instruction()} (حقل gender يبقى بالإنجليزية male/female فقط)
 - المحتوى متوافق مع معلومات الكيان.
 - age عدد صحيح صالح، و gender إما "male" أو "female".
+- {self._culture_hint()}
 """
+
+    def _culture_hint(self) -> str:
+        """توجيه سوداني لبناء الشخصيات (يُهمَل بهدوء إن تعذّر التحميل)."""
+        try:
+            from . import sudanese_culture
+
+            return sudanese_culture.persona_block()
+        except Exception:  # noqa: BLE001
+            return 'اجعل الشخصية واقعية ومتنوعة ولا تُعمّم على قبيلة أو جهة.'
 
     def _build_group_persona_prompt(
         self,
