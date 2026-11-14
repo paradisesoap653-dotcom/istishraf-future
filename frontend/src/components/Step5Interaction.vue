@@ -67,12 +67,17 @@
 
         <!-- Waiting State -->
         <div v-if="!reportOutline" class="waiting-placeholder">
-          <div class="waiting-animation">
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
-            <div class="waiting-ring"></div>
-          </div>
-          <span class="waiting-text">Waiting for Report Agent...</span>
+          <template v-if="loadError">
+            <span class="waiting-text waiting-text--error">{{ loadError }}</span>
+          </template>
+          <template v-else>
+            <div class="waiting-animation">
+              <div class="waiting-ring"></div>
+              <div class="waiting-ring"></div>
+              <div class="waiting-ring"></div>
+            </div>
+            <span class="waiting-text">جارٍ تحميل بيانات التقرير…</span>
+          </template>
         </div>
       </div>
 
@@ -450,6 +455,7 @@ const isSurveying = ref(false)
 
 // Report Data
 const reportOutline = ref(null)
+const loadError = ref('')
 const generatedSections = ref({})
 const collapsedSections = ref(new Set())
 const currentSectionIndex = ref(null)
@@ -874,17 +880,42 @@ const submitSurvey = async () => {
 // Load Report Data
 const loadReportData = async () => {
   if (!props.reportId) return
-  
+
   try {
     addLog(t('log.loadReportData', { id: props.reportId }))
-    
-    // Get report info
+
     const reportRes = await getReport(props.reportId)
-    if (reportRes.success && reportRes.data) {
-      // Load agent logs to get report outline and sections
-      await loadAgentLogs()
+    const data = reportRes && (reportRes.data || null)
+
+    // (1) السجلات الحيّة — تعمل عندما يُفتح التقرير أثناء توليده
+    await loadAgentLogs()
+
+    // (2) التقرير المحفوظ — إن لم نجد هيكلًا في السجلات (تقرير قديم أو
+    //     انتهت صلاحية سجلاته) نقرأ الهيكل والأقسام من التقرير نفسه،
+    //     وإلا بقيت الصفحة عالقة على «بانتظار وكيل التقرير» للأبد.
+    if (!reportOutline.value && data?.outline) {
+      const secs = Array.isArray(data.outline.sections) ? data.outline.sections : []
+      if (secs.length) {
+        reportOutline.value = {
+          title: data.outline.title || 'التقرير',
+          summary: data.outline.summary || '',
+          sections: secs.map(sec => ({ title: sec.title }))
+        }
+        secs.forEach((sec, i) => {
+          const content = (sec.content || '').trim()
+          if (content) generatedSections.value[i + 1] = sec.content
+        })
+        addLog(t('log.reportDataLoaded'))
+      }
+    }
+
+    if (!reportOutline.value) {
+      loadError.value = 'تعذّر تحميل هيكل هذا التقرير. الرجاء فتح التقرير من قائمة التقارير النهائية.'
+    } else {
+      loadError.value = ''
     }
   } catch (err) {
+    loadError.value = 'تعذّر تحميل التقرير: ' + (err?.message || 'خطأ غير معروف')
     addLog(t('log.loadReportFailed', { error: err.message }))
   }
 }
@@ -1053,7 +1084,7 @@ watch(() => props.simulationId, (newId) => {
 }
 
 .main-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 36px;
   font-weight: 700;
   color: #111827;
@@ -1063,7 +1094,7 @@ watch(() => props.simulationId, (newId) => {
 }
 
 .sub-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 16px;
   color: #6B7280;
   font-style: italic;
@@ -1130,7 +1161,7 @@ watch(() => props.simulationId, (newId) => {
 }
 
 .section-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 24px;
   font-weight: 600;
   color: #111827;
@@ -2573,6 +2604,52 @@ watch(() => props.simulationId, (newId) => {
   border: none;
   border-top: 1px solid #E5E7EB;
   margin: 24px 0;
+}
+
+.waiting-text--error {
+  color: #B45309;
+  font-size: 13.5px;
+  line-height: 1.9;
+  text-align: center;
+  max-width: 420px;
+  padding: 0 16px;
+}
+
+/* ===== الجوال: لوحة واحدة بعرض الشاشة (كانت min-width:450px تُقصّ النص) ===== */
+@media (max-width: 768px) {
+  .main-split-layout {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .left-panel.report-style {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 16px 16px 36px 16px;
+    border-right: 0;
+    overflow: visible;
+  }
+
+  .right-panel { width: 100%; min-width: 0; overflow: visible; }
+
+  .report-content-wrapper { max-width: 100%; margin: 0; }
+  .report-header-block { margin-bottom: 22px; }
+  .report-meta { flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .main-title { font-size: 25px; line-height: 1.4; letter-spacing: 0; margin-bottom: 12px; }
+  .sub-title { font-size: 14.5px; line-height: 1.75; margin-bottom: 20px; }
+  .sections-list { gap: 22px; }
+  .report-section-item { word-break: normal; overflow-wrap: anywhere; }
+  .section-header-row { gap: 8px; align-items: center; }
+  .section-number { white-space: nowrap; flex: 0 0 auto; min-width: 1.6em; font-size: 14px; }
+  .section-title { font-size: 19px; line-height: 1.45; }
+}
+
+@media (max-width: 420px) {
+  .main-title { font-size: 22px; }
+  .left-panel.report-style { padding: 14px 13px 32px 13px; }
 }
 </style>
 
