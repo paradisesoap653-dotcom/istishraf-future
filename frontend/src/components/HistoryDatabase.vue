@@ -4,107 +4,69 @@
     :class="{ 'no-projects': projects.length === 0 && !loading }"
     ref="historyContainer"
   >
-    <!-- 背景装饰：技术网格线（只在有项目时显示） -->
-    <div v-if="projects.length > 0 || loading" class="tech-grid-bg">
-      <div class="grid-pattern"></div>
-      <div class="gradient-overlay"></div>
-    </div>
+    <!-- قائمة التقارير النهائية: صفوف واضحة بدل البطاقات المتراكبة -->
+    <div v-if="projects.length > 0" class="report-list-wrap">
+      <div class="report-list-head">
+        <span class="rl-title">التقارير النهائية</span>
+        <span class="rl-count">{{ finalReports.length }} تقرير جاهز من أصل {{ projects.length }} محاكاة</span>
+      </div>
 
-    <!-- 标题区域 -->
-    <div class="section-header">
-      <div class="section-line"></div>
-      <span class="section-title">{{ $t('history.title') }}</span>
-      <div class="section-line"></div>
-    </div>
+      <div class="rl-tabs">
+        <button class="rl-tab" :class="{ active: filter === 'reports' }" @click="filter = 'reports'">
+          التقارير الجاهزة ({{ finalReports.length }})
+        </button>
+        <button class="rl-tab" :class="{ active: filter === 'all' }" @click="filter = 'all'">
+          كل المحاكاة ({{ projects.length }})
+        </button>
+      </div>
 
-    <!-- 卡片容器（只在有项目时显示） -->
-    <div v-if="projects.length > 0" class="cards-container" :class="{ expanded: isExpanded }" :style="containerStyle">
-      <div 
-        v-for="(project, index) in projects" 
-        :key="project.simulation_id"
-        class="project-card"
-        :class="{ expanded: isExpanded, hovering: hoveringCard === index }"
-        :style="getCardStyle(index)"
-        @mouseenter="hoveringCard = index"
-        @mouseleave="hoveringCard = null"
-        @click="navigateToProject(project)"
-      >
-        <!-- 卡片头部：simulation_id 和 功能可用状态 -->
-        <div class="card-header">
-          <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
-          <div class="card-status-icons">
-            <span 
-              class="status-icon" 
-              :class="{ available: project.project_id, unavailable: !project.project_id }"
-              :title="$t('history.graphBuild')"
-            >◇</span>
-            <span 
-              class="status-icon available" 
-              :title="$t('history.envSetup')"
-            >◈</span>
-            <span 
-              class="status-icon" 
-              :class="{ available: project.report_id, unavailable: !project.report_id }"
-              :title="$t('history.analysisReport')"
-            >◆</span>
-          </div>
-        </div>
-
-        <!-- 文件列表区域 -->
-        <div class="card-files-wrapper">
-          <!-- 角落装饰 - 取景框风格 -->
-          <div class="corner-mark top-left-only"></div>
-          
-          <!-- 文件列表 -->
-          <div class="files-list" v-if="project.files && project.files.length > 0">
-            <div 
-              v-for="(file, fileIndex) in project.files.slice(0, 3)" 
-              :key="fileIndex"
-              class="file-item"
-            >
-              <span class="file-tag" :class="getFileType(file.filename)">{{ getFileTypeLabel(file.filename) }}</span>
-              <span class="file-name">{{ truncateFilename(file.filename, 20) }}</span>
+      <div class="report-list">
+        <div
+          v-for="project in visibleProjects"
+          :key="project.simulation_id"
+          class="report-row"
+          :class="{ 'is-ready': project.report_id }"
+          @click="openItem(project)"
+        >
+          <div class="rr-main">
+            <div class="rr-top">
+              <span class="rr-badge" :class="project.report_id ? 'ready' : 'pending'">
+                {{ project.report_id ? 'تقرير جاهز' : 'لم يكتمل' }}
+              </span>
+              <span class="rr-id">{{ formatSimulationId(project.simulation_id) }}</span>
             </div>
-            <!-- 如果有更多文件，显示提示 -->
-            <div v-if="project.files.length > 3" class="files-more">
-              {{ $t('history.moreFiles', { count: project.files.length - 3 }) }}
+
+            <h3 class="rr-title">{{ reportTitle(project) }}</h3>
+
+            <div class="rr-meta">
+              <span class="rr-date">{{ formatDate(project.created_at) }} · {{ formatTime(project.created_at) }}</span>
+              <span class="rr-rounds" :class="getProgressClass(project)">
+                <span class="status-dot">●</span> {{ formatRounds(project) }}
+              </span>
+              <span v-if="project.files && project.files.length" class="rr-files">
+                {{ project.files.length }} ملف مرفوع
+              </span>
             </div>
           </div>
-          <!-- 无文件时的占位 -->
-          <div class="files-empty" v-else>
-            <span class="empty-file-icon">◇</span>
-            <span class="empty-file-text">{{ $t('history.noFiles') }}</span>
+
+          <div class="rr-actions" @click.stop>
+            <button v-if="project.report_id" class="rr-open" @click="openReport(project)">فتح التقرير</button>
+            <button v-else class="rr-open rr-open--muted" @click="openDetails(project)">متابعة المحاكاة</button>
+
+            <ReportDownloadButton
+              v-if="project.report_id"
+              compact
+              :report-id="project.report_id"
+              :file-name="reportTitle(project)"
+            />
+
+            <button class="rr-det" @click="openDetails(project)">التفاصيل</button>
           </div>
         </div>
 
-        <!-- 卡片标题（使用模拟需求的前20字作为标题） -->
-        <h3 class="card-title">{{ getSimulationTitle(project.simulation_requirement) }}</h3>
-
-        <!-- 卡片描述（模拟需求完整展示） -->
-        <p class="card-desc">{{ truncateText(project.simulation_requirement, 55) }}</p>
-
-        <!-- 卡片底部 -->
-        <div class="card-footer">
-          <div class="card-datetime">
-            <span class="card-date">{{ formatDate(project.created_at) }}</span>
-            <span class="card-time">{{ formatTime(project.created_at) }}</span>
-          </div>
-          <span class="card-progress" :class="getProgressClass(project)">
-            <span class="status-dot">●</span> {{ formatRounds(project) }}
-          </span>
+        <div v-if="visibleProjects.length === 0" class="rl-empty">
+          لا توجد تقارير جاهزة بعد. أول محاكاة تكتمل سيظهر تقريرها هنا مباشرة.
         </div>
-        
-        <!-- تحميل تقرير المشروع بصيغه مباشرة من البطاقة -->
-        <div v-if="project.report_id" class="card-download-row">
-          <ReportDownloadButton
-            compact
-            :report-id="project.report_id"
-            :file-name="project.project_name || project.name || ''"
-          />
-        </div>
-
-        <!-- 底部装饰线 (hover时展开) -->
-        <div class="card-bottom-line"></div>
       </div>
     </div>
 
@@ -226,6 +188,11 @@ const isExpanded = ref(false)
 const hoveringCard = ref(null)
 const historyContainer = ref(null)
 const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
+const filter = ref('reports')  // reports = التقارير الجاهزة، all = كل المحاكاة
+
+// المشاريع التي اكتمل تقريرها
+const finalReports = computed(() => projects.value.filter(p => p.report_id))
+const visibleProjects = computed(() => (filter.value === 'reports' ? finalReports.value : projects.value))
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
@@ -419,6 +386,29 @@ const truncateFilename = (filename, maxLength) => {
 }
 
 // 打开项目详情弹窗
+// فتح التقرير الحفظي مباشرة بدون إعادة المحاكاة
+const openReport = (project) => {
+  if (!project?.report_id) return
+  router.push({ name: 'Report', params: { reportId: project.report_id } })
+}
+
+// فتح نافذة التفاصيل (خطوات المشروع / المحاكاة / التقرير)
+const openDetails = (project) => { selectedProject.value = project }
+
+// نقر الصف: التقرير الجاهز يُفتح مباشرة، وغير المكتمل يفتح التفاصيل
+const openItem = (project) => {
+  if (project.report_id) openReport(project)
+  else openDetails(project)
+}
+
+// عنوان مختصر مقروء من نص الطلب
+const reportTitle = (project) => {
+  const req = (project?.simulation_requirement || '').replace(/\s+/g, ' ').trim()
+  if (!req) return t('history.untitledSimulation')
+  const line = req.split(/[.؟!\n]/)[0].trim() || req
+  return line.length > 70 ? line.slice(0, 70) + '…' : line
+}
+
 const navigateToProject = (simulation) => {
   selectedProject.value = simulation
 }
@@ -603,8 +593,8 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   min-height: 280px;
-  margin-top: 40px;
-  padding: 35px 0 40px;
+  margin-top: 24px;
+  padding: 8px 0 26px;
   overflow: visible;
 }
 
@@ -1370,4 +1360,131 @@ onUnmounted(() => {
 .modal-download-row { margin: 6px 0 10px; display: flex; justify-content: center; }
 
 .card-download-row { margin-top: 10px; display: flex; justify-content: flex-end; }
+
+/* ===== قائمة التقارير النهائية ===== */
+.report-list-wrap {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 4px 4px 10px;
+  position: relative;
+  z-index: 2;
+}
+
+.report-list-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.rl-title { font-size: 17px; font-weight: 800; color: var(--text-primary, #0F172A); }
+.rl-count { font-size: 12px; color: var(--text-muted, #64748B); }
+
+.rl-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+
+.rl-tab {
+  padding: 7px 13px; border-radius: 999px;
+  border: 1px solid var(--border-frame, #CBD5E1);
+  background: var(--bg-card, #fff);
+  color: var(--text-secondary, #475569);
+  font-family: inherit; font-size: 12.5px; font-weight: 700;
+  cursor: pointer; transition: all .15s ease;
+}
+.rl-tab.active {
+  background: var(--accent-orange, #FF4500);
+  border-color: var(--accent-orange, #FF4500);
+  color: #fff;
+}
+
+.report-list { display: flex; flex-direction: column; gap: 10px; }
+
+.report-row {
+  display: flex; gap: 16px; align-items: flex-start; justify-content: space-between;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-frame, #E5E7EB);
+  box-shadow: var(--card-shadow, 0 2px 10px rgba(15, 23, 42, .04));
+  cursor: pointer;
+  transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.report-row:hover { border-color: var(--border-strong, #94A3B8); }
+.report-row.is-ready { border-inline-start: 3px solid var(--accent-orange, #FF4500); }
+
+.rr-main { flex: 1; min-width: 0; }
+
+.rr-top { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap; }
+
+.rr-badge { font-size: 10.5px; font-weight: 800; padding: 3px 8px; border-radius: 6px; }
+.rr-badge.ready { background: rgba(16, 185, 129, .14); color: #059669; }
+.rr-badge.pending { background: rgba(148, 163, 184, .2); color: var(--text-muted, #64748B); }
+
+.rr-id { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted, #94A3B8); direction: ltr; }
+
+.rr-title {
+  font-size: 15.5px; font-weight: 800; line-height: 1.5;
+  color: var(--text-primary, #0F172A);
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.rr-desc {
+  font-size: 12.5px; line-height: 1.75;
+  color: var(--text-secondary, #475569);
+  margin: 0 0 8px;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.rr-meta { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-muted, #64748B); }
+.rr-meta .status-dot { font-size: 9px; }
+.rr-rounds.completed { color: #059669; }
+.rr-rounds.in-progress { color: #D97706; }
+.rr-rounds.not-started { color: var(--text-muted, #94A3B8); }
+
+.rr-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; flex: 0 0 auto; }
+
+.rr-open {
+  padding: 9px 16px; border-radius: 10px; border: 0;
+  background: var(--accent-orange, #FF4500); color: #fff;
+  font-family: inherit; font-size: 13px; font-weight: 700;
+  cursor: pointer; white-space: nowrap;
+}
+.rr-open:hover { filter: brightness(1.06); }
+.rr-open--muted {
+  background: var(--bg-subtle, #F1F5F9); color: var(--text-secondary, #475569);
+  border: 1px solid var(--border-frame, #CBD5E1);
+}
+
+.rr-det {
+  padding: 7px 12px; border-radius: 10px;
+  border: 1px solid var(--border-frame, #CBD5E1);
+  background: transparent; color: var(--text-secondary, #475569);
+  font-family: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.rr-det:hover { border-color: var(--border-strong, #94A3B8); }
+
+.rl-empty {
+  padding: 26px 16px; text-align: center; font-size: 13px;
+  color: var(--text-muted, #64748B);
+  background: var(--bg-subtle, #F8FAFC);
+  border: 1px dashed var(--border-frame, #CBD5E1);
+  border-radius: 14px;
+}
+
+@media (max-width: 640px) {
+  .report-row { flex-direction: column; gap: 12px; padding: 13px 13px; }
+  .rr-actions { width: 100%; align-items: center; justify-content: flex-start; }
+  .rr-open { flex: 1 1 100%; text-align: center; }
+  .rr-det { flex: 1 1 auto; text-align: center; }
+}
+
+</style>
+
+<style>
+/* خلفية قسم التقارير شفافة لتأخذ لون الإطار الخارجي في النهاري والليلي */
+html[data-theme] .history-database {
+  background-color: transparent !important;
+}
 </style>
