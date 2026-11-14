@@ -6,6 +6,15 @@
       <span class="pnums-caret">{{ open ? '▲' : '▼' }}</span>
     </button>
 
+    <div v-if="!open && (interest || savedPhone)" class="pnums-glance">
+      <span v-if="interest" class="pnums-glance-item">
+        اهتمام جوجل عن «{{ interest.keyword }}»: {{ arNum(interest.average) }} من ١٠٠ · {{ interest.level }}
+      </span>
+      <span v-if="savedPhone" class="pnums-glance-item">
+        رقم التواصل: <span dir="ltr">{{ savedPhone }}</span>
+      </span>
+    </div>
+
     <div v-if="open" class="pnums-body">
       <p class="pnums-note">
         ما تكتبه هنا يُعامل <b>مدخلًا</b> لا افتراضًا: تُوزَّن به أفعال المحاكاة بين
@@ -160,6 +169,7 @@ const trendBusy = ref(false)
 const trendNote = ref('')
 const trendNoteError = ref(false)
 const interest = ref(null)
+const savedPhone = ref('')
 
 const ensureGroups = (list) => {
   if (!form.contact) form.contact = { phone: '' }
@@ -199,6 +209,7 @@ const load = async () => {
       })
     })
     interest.value = (inputs.interest && inputs.interest.keyword) ? inputs.interest : null
+    savedPhone.value = String((inputs.contact || {}).phone || '')
     if (interest.value) trendKeyword.value = interest.value.keyword
     savedSummary.value = data.summary || ''
     applyWeights(data.weights)
@@ -400,6 +411,13 @@ onMounted(load)
   text-align: right;
 }
 .pnums-title { font-weight: 700; font-size: 14px; color: var(--text-primary, #0f172a); }
+.pnums-glance {
+  display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; margin-top: -2px;
+}
+.pnums-glance-item {
+  font-size: 11.5px; color: var(--text-secondary, #64748b);
+  background: #f6f9ff; border-radius: 999px; padding: 3px 9px;
+}
 .pnums-opt { font-weight: 400; font-size: 12px; color: var(--text-secondary, #64748b); }
 .pnums-hint { margin-inline-start: auto; font-size: 12px; color: var(--text-secondary, #64748b); }
 .pnums-caret { font-size: 10px; color: var(--text-secondary, #64748b); }
