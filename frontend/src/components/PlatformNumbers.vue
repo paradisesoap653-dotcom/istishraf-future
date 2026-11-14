@@ -66,7 +66,7 @@ const PLATFORM_LABELS = {
   reddit: 'ريديت'
 }
 
-const open = ref(true)  // مفتوحة ابتداءً: هي أول ما يحتاجه المستخدم
+const open = ref(true)  // تُفتح للمستخدم الجديد؛ وبعد الحفظ تُطوى تلقائيًا
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -108,6 +108,8 @@ const load = async () => {
     })
     savedSummary.value = data.summary || ''
     applyWeights(data.weights)
+    // إن كانت الأرقام محفوظة سابقًا نطوي البطاقة حتى لا تحتل الشاشة كلها
+    if (savedSummary.value) open.value = false
   } catch (err) {
     loadError.value = 'تعذر تحميل الأرقام المحفوظة.'
   } finally {
