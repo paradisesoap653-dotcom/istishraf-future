@@ -26,6 +26,10 @@ concurrency:
   group: queue-worker
   cancel-in-progress: false
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   drain:
     runs-on: ubuntu-latest
@@ -54,6 +58,37 @@ jobs:
           ZEP_API_KEY: ${{ secrets.ZEP_API_KEY }}
           ISTISHRAF_UPLOAD_DIR: ${{ runner.temp }}/uploads
           PYTHONPATH: .
+          APP_URL: https://istishraf-future.vercel.app
         run: |
           BUDGET="${{ github.event.inputs.max_seconds || '280' }}"
-          python -m app.worker --drain --max-seconds "$BUDGET"
+          # جدول GitHub غير موثوق (تأخّر ساعات اليوم)، فإن خرج التشغيل ومهام ما زالت
+          # في الطابور توقّف كل شيء حتى نبضة الجدول التالية. لذلك نُكمل العمل داخل
+          # نفس التشغيل حتى تفرغ الطابور أو تقترب نهاية مهلة الوظيفة (12 دقيقة).
+          for i in 1 2 3; do
+            python -m app.worker --drain --max-seconds "$BUDGET" || true
+            PENDING=$(curl -fsS -m 20 "$APP_URL/health" \
+              | python -c "import sys,json;print(json.load(sys.stdin)['queue']['pending'])" \
+              2>/dev/null || echo 0)
+            echo "الدورة $i — مهام متبقية في الطابور: $PENDING"
+            if [ "$PENDING" = "0" ]; then break; fi
+          done
+
+      - name: إعادة إيقاظ العامل إن بقيت مهام
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_URL: https://istishraf-future.vercel.app
+        run: |
+          PENDING=$(curl -fsS -m 20 "$APP_URL/health" \
+            | python -c "import sys,json;print(json.load(sys.stdin)['queue']['pending'])" \
+            2>/dev/null || echo 0)
+          echo "مهام متبقية: $PENDING"
+          if [ "$PENDING" != "0" ]; then
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/queue-worker.yml/dispatches" \
+              -d '{"ref":"main","inputs":{"max_seconds":"280"}}'
+            echo "أُرسلت نبضة إضافية للعامل"
+          fi
