@@ -2235,8 +2235,15 @@ def save_platform_inputs(simulation_id: str):
             },
         })
     except Exception as exc:  # noqa: BLE001
+        # نُرجع نوع الخطأ ورسالته المختصرة حتى يُشخَّص العطل من الواجهة مباشرة
+        # (رسالة «تحقق من الاتصال» عامة ولا تدل على شيء).
         logger.error(f"تعذر حفظ أرقام المنصّات: {exc}")
-        return jsonify({"success": False, "error": "تعذر حفظ الأرقام، حاول مرة أخرى"}), 500
+        logger.error(traceback.format_exc())
+        detail = f"{type(exc).__name__}: {str(exc)[:160]}" if str(exc) else type(exc).__name__
+        return jsonify({
+            "success": False,
+            "error": f"تعذر حفظ الأرقام ({detail})",
+        }), 500
 
 
 @simulation_bp.route('/<simulation_id>/posts', methods=['GET'])

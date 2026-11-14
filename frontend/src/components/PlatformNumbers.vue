@@ -27,6 +27,7 @@
               min="0"
               :placeholder="field.hint"
               v-model="form[group.platform][field.key]"
+              @input="persistDraft"
             />
           </div>
         </div>
@@ -34,10 +35,11 @@
         <p v-if="error" class="pnums-status pnums-status--err">{{ error }}</p>
         <div class="pnums-actions">
           <button type="button" class="pnums-save" :disabled="saving" @click="save">
-            {{ saving ? 'جارٍ الحفظ…' : 'احفظ الأرقام' }}
+            {{ saving ? 'جارٍ الحفظ…' : (error ? 'أعد المحاولة' : 'احفظ الأرقام') }}
           </button>
           <button type="button" class="pnums-clear" :disabled="saving" @click="clear">امسح الكل</button>
         </div>
+        <p v-if="draftSaved" class="pnums-draft">مسودة أرقامك محفوظة في هذا الجهاز، فلن تفقدها إن أعدت المحاولة.</p>
 
         <p v-if="savedSummary" class="pnums-saved">
           <b>محفوظ:</b> {{ savedSummary }}
@@ -75,6 +77,8 @@ const fields = ref([])
 const form = reactive({})
 const savedSummary = ref('')
 const shareChips = ref([])
+const draftSaved = ref(false)
+const draftKey = () => `istishraf_pnums_draft_${props.simulationId}`
 
 const ensureGroups = (list) => {
   list.forEach((group) => {
@@ -110,10 +114,34 @@ const load = async () => {
     applyWeights(data.weights)
     // إن كانت الأرقام محفوظة سابقًا نطوي البطاقة حتى لا تحتل الشاشة كلها
     if (savedSummary.value) open.value = false
+    else {
+      // لم تُحفظ أرقام: استعد المسودة المحلية إن وُجدت
+      try {
+        const draft = JSON.parse(localStorage.getItem(draftKey()) || 'null')
+        if (draft && typeof draft === 'object') {
+          Object.entries(draft).forEach(([platform, values]) => {
+            if (!form[platform]) form[platform] = {}
+            Object.entries(values || {}).forEach(([key, value]) => { form[platform][key] = value })
+          })
+          draftSaved.value = true
+        }
+      } catch (err) { /* تجاهل */ }
+    }
   } catch (err) {
     loadError.value = 'تعذر تحميل الأرقام المحفوظة.'
   } finally {
     loading.value = false
+  }
+}
+
+const persistDraft = () => {
+  try {
+    const payload = collect()
+    if (Object.keys(payload).length) {
+      localStorage.setItem(draftKey(), JSON.stringify(payload))
+    }
+  } catch (err) {
+    /* التخزين المحلي قد يكون معطّلًا؛ لا نعطّل الحفظ بسبب ذلك */
   }
 }
 
@@ -130,6 +158,19 @@ const collect = () => {
   return out
 }
 
+const describeError = (err) => {
+  const status = err?.response?.status
+  const serverMsg = err?.response?.data?.error
+  if (status === 401) return 'انتهت صلاحية الجلسة. سجّل الدخول من جديد ثم أعد المحاولة.'
+  if (status === 404) return 'هذا المشروع غير متاح للحساب الحالي.'
+  if (status === 400 && serverMsg) return serverMsg
+  if (status >= 500) {
+    return `خطأ في الخادم أثناء الحفظ (${status})${serverMsg ? ': ' + serverMsg : ''}. أرقامك باقية هنا — اضغط «أعد المحاولة».`
+  }
+  if (!status) return 'لم يصل الطلب إلى الخادم (شبكة أو حجب). أرقامك باقية هنا — اضغط «أعد المحاولة».'
+  return `تعذّر الحفظ (${status})${serverMsg ? ': ' + serverMsg : ''}`
+}
+
 const save = async () => {
   saving.value = true
   error.value = ''
@@ -138,8 +179,13 @@ const save = async () => {
     const data = res?.data || res || {}
     savedSummary.value = data.summary || ''
     applyWeights(data.weights)
+    draftSaved.value = false
+    try { localStorage.removeItem(draftKey()) } catch (err) { /* تجاهل */ }
   } catch (err) {
-    error.value = 'تعذر الحفظ، تحقق من الاتصال وحاول مرة أخرى.'
+    console.error('platform-inputs save failed:', err?.response?.status, err?.message)
+    persistDraft()
+    draftSaved.value = true
+    error.value = describeError(err)
   } finally {
     saving.value = false
   }
@@ -252,6 +298,7 @@ onMounted(load)
   color: var(--text-primary, #0f172a);
   word-break: break-word;
 }
+.pnums-draft { margin: 6px 0 0; font-size: 11.5px; color: var(--text-secondary, #64748b); }
 .pnums-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .pnums-chip {
   font-size: 11.5px;
