@@ -7,7 +7,7 @@
       :aria-expanded="open ? 'true' : 'false'"
       @click.stop="toggle"
     >
-      <svg v-if="!busy" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg v-if="!busy" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
         <polyline points="7 10 12 15 17 10"></polyline>
         <line x1="12" y1="15" x2="12" y2="3"></line>
@@ -19,29 +19,45 @@
       </svg>
     </button>
 
-    <div v-if="open" class="dl-menu" role="menu">
-      <button
-        v-for="f in formats"
-        :key="f.id"
-        class="dl-item"
-        type="button"
-        :disabled="busy"
-        @click.stop="download(f.id)"
+    <!-- القائمة تُلحق بجسم الصفحة حتى لا تُقصّ داخل البطاقات ولا تتأثر بأي تحريك للحاوية -->
+    <Teleport to="body">
+      <div v-if="open" class="dl-backdrop" @click.stop="open = false"></div>
+      <div
+        v-if="open"
+        class="dl-menu"
+        :class="{ 'is-sheet': pos.sheet }"
+        :style="menuStyle"
+        role="menu"
+        dir="rtl"
+        @click.stop
       >
-        <span class="dl-icon" :class="'is-' + f.id">{{ f.badge }}</span>
-        <span class="dl-text">
-          <span class="dl-label">{{ f.label }}</span>
-          <span class="dl-hint">{{ f.hint }}</span>
-        </span>
-      </button>
-    </div>
+        <div class="dl-head">
+          <span>اختر الصيغة</span>
+          <button class="dl-close" type="button" @click.stop="open = false" aria-label="إغلاق">✕</button>
+        </div>
+        <button
+          v-for="f in formats"
+          :key="f.id"
+          class="dl-item"
+          type="button"
+          :disabled="busy"
+          @click.stop="download(f.id)"
+        >
+          <span class="dl-icon" :class="'is-' + f.id">{{ f.badge }}</span>
+          <span class="dl-text">
+            <span class="dl-label">{{ f.label }}</span>
+            <span class="dl-hint">{{ f.hint }}</span>
+          </span>
+        </button>
+      </div>
+    </Teleport>
 
     <p v-if="message" class="dl-msg" :class="error ? 'is-error' : 'is-ok'">{{ message }}</p>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import service from '../api'
 
 const props = defineProps({
@@ -64,20 +80,67 @@ const busy = ref(false)
 const message = ref('')
 const error = ref(false)
 const rootEl = ref(null)
+const pos = ref({ sheet: false, top: 0, left: 0, width: 250 })
 
-const toggle = () => {
+const menuStyle = computed(() => {
+  if (pos.value.sheet) return {}
+  return {
+    top: pos.value.top + 'px',
+    left: pos.value.left + 'px',
+    width: pos.value.width + 'px'
+  }
+})
+
+// نُثبّت القائمة بإحداثيات محسوبة من الزر، لأن أي transform على الحاويات
+// يُفسد position:fixed ويجعل القائمة تظهر خارج الشاشة (وهو ما كان يحدث على الهاتف).
+const place = () => {
+  const trigger = rootEl.value?.querySelector('.dl-trigger')
+  if (!trigger) return
+  const r = trigger.getBoundingClientRect()
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  if (vw <= 640) {
+    pos.value = { sheet: true, top: 0, left: 0, width: 0 }
+    return
+  }
+  const width = props.compact ? 235 : 260
+  const rtl = getComputedStyle(document.documentElement).direction === 'rtl'
+  let left = rtl ? r.right - width : r.left
+  left = Math.max(8, Math.min(left, vw - width - 8))
+  const heightEstimate = 330
+  const below = r.bottom + 8
+  const top = below + heightEstimate > vh - 8 ? Math.max(8, r.top - heightEstimate - 8) : below
+  pos.value = { sheet: false, top, left, width }
+}
+
+const toggle = async () => {
   if (busy.value) return
-  open.value = !open.value
-  if (open.value) { message.value = '' }
+  if (open.value) { open.value = false; return }
+  message.value = ''
+  open.value = true
+  await nextTick()
+  place()
 }
 
 const closeMenu = (event) => {
-  if (!rootEl.value) return
-  if (!rootEl.value.contains(event.target)) open.value = false
+  if (!open.value) return
+  if (rootEl.value && rootEl.value.contains(event.target)) return
+  if (event.target?.closest?.('.dl-menu')) return
+  open.value = false
 }
 
-onMounted(() => document.addEventListener('click', closeMenu))
-onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
+const onViewportChange = () => { if (open.value) place() }
+
+onMounted(() => {
+  document.addEventListener('click', closeMenu)
+  window.addEventListener('scroll', onViewportChange, true)
+  window.addEventListener('resize', onViewportChange)
+})
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeMenu)
+  window.removeEventListener('scroll', onViewportChange, true)
+  window.removeEventListener('resize', onViewportChange)
+})
 
 const safeName = (ext) => {
   const base = (props.fileName || `تقرير-${props.reportId}`).replace(/[\\/:*?"<>|]+/g, '-').trim()
@@ -128,44 +191,59 @@ const download = async (format) => {
 <style scoped>
 .report-download { position: relative; display: inline-flex; flex-direction: column; align-items: flex-start; }
 
+/* زر واضح لا يُشبه المعطّل */
 .dl-trigger {
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 9px 14px; border-radius: 12px; cursor: pointer;
-  border: 1px solid rgba(255, 69, 0, .35);
-  background: linear-gradient(180deg, rgba(255, 69, 0, .12), rgba(255, 69, 0, .05));
-  color: inherit; font-family: inherit; font-size: 14px; font-weight: 600;
-  transition: transform .12s ease, box-shadow .12s ease, background .12s ease;
+  padding: 10px 16px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(190, 45, 0, .35);
+  background: linear-gradient(180deg, #FF5A17, #E63C00);
+  color: #fff; font-family: inherit; font-size: 14.5px; font-weight: 700;
+  box-shadow: 0 4px 14px rgba(230, 60, 0, .28);
+  transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
 }
-.dl-trigger:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255, 69, 0, .18); }
-.dl-trigger:disabled { opacity: .6; cursor: not-allowed; }
+.dl-trigger:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(230, 60, 0, .32); filter: brightness(1.04); }
+.dl-trigger:active:not(:disabled) { transform: translateY(0) scale(.99); }
+.dl-trigger:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
 
-.compact .dl-trigger { padding: 5px 9px; border-radius: 9px; font-size: 12.5px; gap: 5px; }
+.compact .dl-trigger { padding: 5px 10px; border-radius: 9px; font-size: 12.5px; gap: 5px; box-shadow: none; }
 .compact .dl-trigger svg { width: 14px; height: 14px; }
-.compact .dl-menu { min-width: 225px; }
-.compact .dl-msg { font-size: 11.5px; }
 
 .spinner {
   width: 15px; height: 15px; border-radius: 50%;
-  border: 2px solid rgba(255, 69, 0, .3); border-top-color: #FF4500;
+  border: 2px solid rgba(255, 255, 255, .45); border-top-color: #fff;
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.dl-backdrop { position: fixed; inset: 0; background: rgba(10, 15, 30, .38); z-index: 9998; }
+
 .dl-menu {
-  position: absolute; top: calc(100% + 8px); inset-inline-start: 0; z-index: 40;
-  min-width: 250px; padding: 6px; border-radius: 14px;
-  background: var(--panel-bg, #fff); color: var(--text-primary, #1b1d22);
+  position: fixed; z-index: 9999;
+  padding: 6px; border-radius: 14px;
+  background: #fff; color: #1b1d22;
   border: 1px solid rgba(0, 0, 0, .08);
-  box-shadow: 0 18px 45px rgba(10, 15, 30, .18);
-  backdrop-filter: blur(6px);
+  box-shadow: 0 18px 45px rgba(10, 15, 30, .22);
+  font-family: 'Fustat', 'Inter', system-ui, sans-serif;
+  max-height: 70vh; overflow-y: auto;
 }
+
+.dl-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 6px 8px; font-size: 12px; font-weight: 700; color: #6B7280;
+}
+.dl-close {
+  border: 0; background: transparent; color: #9CA3AF;
+  font-size: 15px; line-height: 1; cursor: pointer; padding: 4px 6px; border-radius: 8px;
+}
+.dl-close:hover { background: rgba(0, 0, 0, .06); color: #374151; }
 
 .dl-item {
   display: flex; align-items: center; gap: 10px; width: 100%;
-  padding: 9px 10px; border: 0; border-radius: 10px; cursor: pointer;
+  padding: 10px 10px; border: 0; border-radius: 10px; cursor: pointer;
   background: transparent; color: inherit; font-family: inherit; text-align: start;
 }
 .dl-item:hover:not(:disabled) { background: rgba(255, 69, 0, .09); }
+.dl-item:active:not(:disabled) { background: rgba(255, 69, 0, .16); }
 .dl-item:disabled { opacity: .55; cursor: not-allowed; }
 
 .dl-icon {
@@ -180,14 +258,22 @@ const download = async (format) => {
 .is-txt { background: #6B7280; }
 
 .dl-text { display: flex; flex-direction: column; line-height: 1.35; }
-.dl-label { font-size: 14px; font-weight: 600; }
-.dl-hint { font-size: 11.5px; opacity: .62; }
+.dl-label { font-size: 14.5px; font-weight: 700; color: #111827; }
+.dl-hint { font-size: 11.5px; color: #6B7280; }
 
 .dl-msg { margin: 8px 0 0; font-size: 12.5px; }
 .dl-msg.is-ok { color: #15803d; }
 .dl-msg.is-error { color: #dc2626; }
 
-@media (max-width: 600px) {
-  .dl-menu { position: fixed; inset-inline: 12px; top: auto; bottom: 16px; min-width: 0; }
+/* على الهاتف: لوحة سفلية كاملة العرض */
+.dl-menu.is-sheet {
+  inset-inline: 12px; left: 12px; right: 12px; width: auto;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  top: auto; border-radius: 18px;
+  padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
 }
+.dl-menu.is-sheet .dl-item { padding: 13px 10px; }
+.dl-menu.is-sheet .dl-label { font-size: 15px; }
 </style>

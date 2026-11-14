@@ -33,13 +33,6 @@
         <div class="card-header">
           <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
           <div class="card-status-icons">
-            <!-- تحميل تقرير المشروع مباشرة من القائمة -->
-            <ReportDownloadButton
-              v-if="project.report_id"
-              compact
-              :report-id="project.report_id"
-              :file-name="project.project_name || project.name || ''"
-            />
             <span 
               class="status-icon" 
               :class="{ available: project.project_id, unavailable: !project.project_id }"
@@ -101,6 +94,15 @@
           </span>
         </div>
         
+        <!-- تحميل تقرير المشروع بصيغه مباشرة من البطاقة -->
+        <div v-if="project.report_id" class="card-download-row">
+          <ReportDownloadButton
+            compact
+            :report-id="project.report_id"
+            :file-name="project.project_name || project.name || ''"
+          />
+        </div>
+
         <!-- 底部装饰线 (hover时展开) -->
         <div class="card-bottom-line"></div>
       </div>
@@ -1366,4 +1368,6 @@ onUnmounted(() => {
 }
 
 .modal-download-row { margin: 6px 0 10px; display: flex; justify-content: center; }
+
+.card-download-row { margin-top: 10px; display: flex; justify-content: flex-end; }
 </style>

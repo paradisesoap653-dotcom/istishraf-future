@@ -2505,7 +2505,7 @@ watch(() => props.reportId, (newId) => {
 }
 
 .main-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 36px;
   font-weight: 700;
   color: #111827;
@@ -2515,7 +2515,7 @@ watch(() => props.reportId, (newId) => {
 }
 
 .sub-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 16px;
   color: #6B7280;
   font-style: italic;
@@ -2578,10 +2578,13 @@ watch(() => props.reportId, (newId) => {
   font-size: 16px;
   color: #9CA3AF; /* 深灰色，不随状态变化 */
   font-weight: 500;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  min-width: 1.6em;
 }
 
 .section-title {
-  font-family: 'Times New Roman', Times, serif;
+  font-family: 'Fustat', 'Times New Roman', Times, serif;
   font-size: 24px;
   font-weight: 600;
   color: #111827;
@@ -5333,6 +5336,55 @@ watch(() => props.reportId, (newId) => {
 .log-msg.error { color: #EF5350; }
 .log-msg.warning { color: #FFA726; }
 .log-msg.success { color: #66BB6A; }
+
+
+/* ===== الجوال: لوحة واحدة بعرض الشاشة بدل لوحتين متجاورتين ===== */
+@media (max-width: 768px) {
+  .main-split-layout {
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .left-panel.report-style {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: 16px 16px 36px 16px;
+    border-right: 0;
+    overflow: visible;
+  }
+
+  .right-panel {
+    width: 100%;
+    min-width: 0;
+    border-top: 1px solid #E5E7EB;
+    overflow: visible;
+  }
+
+  .report-content-wrapper { max-width: 100%; margin: 0; }
+  .report-header-block { margin-bottom: 22px; }
+
+  .report-meta { flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+
+  .main-title { font-size: 25px; line-height: 1.4; letter-spacing: 0; margin-bottom: 12px; }
+  .sub-title { font-size: 14.5px; line-height: 1.75; margin-bottom: 20px; }
+
+  .sections-list { gap: 22px; }
+  .report-section-item { word-break: normal; overflow-wrap: anywhere; }
+}
+
+@media (max-width: 768px) {
+  .section-header-row { gap: 8px; align-items: center; }
+  .section-title { font-size: 19px; line-height: 1.45; }
+  .section-number { font-size: 14px; }
+}
+
+@media (max-width: 420px) {
+  .main-title { font-size: 22px; }
+  .left-panel.report-style { padding: 14px 13px 32px 13px; }
+}
 
 .report-download-row {
   margin: 4px 0 14px;
