@@ -621,6 +621,113 @@ def download_report(report_id: str):
         }), 500
 
 
+# ============== السيناريو المقارن ==============
+
+@report_bp.route('/<report_id>/scenario', methods=['POST'])
+def run_report_scenario(report_id: str):
+    """إعادة تشغيل جولات قصيرة على نفس المحاكاة بتغيير افتراض، ومقارنة النتائج."""
+    from ..services.scenario_runner import ScenarioError, run_and_compare
+
+    payload = request.get_json(silent=True) or {}
+    change = (payload.get('change') or '').strip()
+    try:
+        rounds = int(payload.get('rounds') or 2)
+    except (TypeError, ValueError):
+        rounds = 2
+
+    if not change:
+        return jsonify({
+            "success": False,
+            "error": "اكتب التغيير المطلوب أولًا (مثال: خفض العمولة إلى 5%).",
+        }), 400
+
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": t('api.reportNotFound', id=report_id)
+            }), 404
+
+        simulation_id = getattr(report, 'simulation_id', None)
+        if not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": "هذا التقرير غير مرتبط بمحاكاة، فلا يمكن تشغيل سيناريو عليه.",
+            }), 409
+
+        result = run_and_compare(report_id, simulation_id, change, rounds)
+        return jsonify({"success": True, "data": result})
+
+    except ScenarioError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر تشغيل السيناريو المقارن: {exc}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            "success": False,
+            "error": "تعذر تشغيل السيناريو، حاول مرة أخرى.",
+        }), 500
+
+
+@report_bp.route('/<report_id>/scenarios', methods=['GET'])
+def list_report_scenarios(report_id: str):
+    """كل السيناريوهات المحفوظة لهذا التقرير."""
+    from ..services.scenario_runner import list_scenarios
+
+    try:
+        items = list_scenarios(report_id)
+        return jsonify({"success": True, "data": items, "count": len(items)})
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر سرد السيناريوهات: {exc}")
+        return jsonify({"success": False, "error": "تعذر قراءة السيناريوهات"}), 500
+
+
+@report_bp.route('/<report_id>/scenario/<scenario_id>/download', methods=['GET'])
+def download_report_scenario(report_id: str, scenario_id: str):
+    """تحميل مقارنة السيناريو بالصيغ نفسها: md · txt · html · docx · pdf."""
+    from urllib.parse import quote
+
+    from ..services.report_export import ExportError, SUPPORTED_FORMATS, build_export
+    from ..services.scenario_runner import get_scenario
+
+    fmt = (request.args.get('format') or 'pdf').strip().lower()
+    if fmt in ('markdown', 'mdown'):
+        fmt = 'md'
+    if fmt in ('word', 'doc'):
+        fmt = 'docx'
+    if fmt not in SUPPORTED_FORMATS:
+        return jsonify({
+            "success": False,
+            "error": "صيغة غير مدعومة. المتاح: " + ", ".join(SUPPORTED_FORMATS),
+        }), 400
+
+    scenario = get_scenario(report_id, scenario_id)
+    if not scenario:
+        return jsonify({"success": False, "error": "السيناريو غير موجود"}), 404
+
+    markdown_text = scenario.get('markdown') or ''
+    if not markdown_text.strip():
+        return jsonify({"success": False, "error": "لا يوجد نص لهذا السيناريو"}), 409
+
+    title = "سيناريو مقارن — استشراف"
+    try:
+        data, mime, ext = build_export(markdown_text, fmt, title=title)
+        ascii_name = f"istishraf-scenario-{scenario_id}{ext}"
+        utf8_name = quote(f"سيناريو-مقارن-{scenario_id}{ext}")
+        response = Response(data, mimetype=mime.split(';')[0])
+        response.headers['Content-Disposition'] = (
+            f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
+        )
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except ExportError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر تصدير السيناريو: {exc}")
+        return jsonify({"success": False, "error": "تعذر تجهيز الملف"}), 500
+
+
 @report_bp.route('/<report_id>', methods=['DELETE'])
 def delete_report(report_id: str):
     """删除报告"""

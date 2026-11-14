@@ -65,3 +65,30 @@ export const getReportProgress = (reportId) => {
 export const getReportSections = (reportId) => {
   return service.get(`/api/report/${reportId}/sections`)
 }
+
+/**
+ * سيناريو مقارن: إعادة تشغيل جولات قصيرة على نفس المحاكاة بعد تغيير افتراض.
+ * @param {string} reportId
+ * @param {{change: string, rounds: number}} payload
+ */
+export const runReportScenario = (reportId, payload) => {
+  return service.post(`/api/report/${reportId}/scenario`, payload, { timeout: 290000 })
+}
+
+/**
+ * السيناريوهات المحفوظة لهذا التقرير
+ * @param {string} reportId
+ */
+export const getReportScenarios = (reportId) => {
+  return service.get(`/api/report/${reportId}/scenarios`)
+}
+
+/**
+ * رابط تحميل مقارنة السيناريو بصيغة معيّنة
+ * @param {string} reportId
+ * @param {string} scenarioId
+ * @param {string} format
+ */
+export const getScenarioDownloadUrl = (reportId, scenarioId, format = 'pdf') => {
+  return `/api/report/${reportId}/scenario/${scenarioId}/download?format=${format}`
+}

@@ -12,9 +12,18 @@
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
             </div>
 
-            <!-- تحميل التقرير بكل الصيغ: PDF · Word · HTML · Markdown · نص -->
+            <!-- أدوات التقرير: التحميل بكل الصيغ + السيناريو المقارن -->
             <div v-if="reportId" class="report-download-row">
               <ReportDownloadButton :report-id="reportId" :file-name="reportOutline?.title || ''" />
+              <ScenarioCompare v-if="isComplete" :report-id="reportId" />
+            </div>
+
+            <!-- دليل قراءة الأرقام: من أين جاء كل رقم في التقرير -->
+            <div class="report-source-legend">
+              <span class="lg-title">كيف تقرأ الأرقام؟</span>
+              <span class="lg-item"><span class="lg-tag tag-input">مدخل</span> من طلبك أو ملفاتك</span>
+              <span class="lg-item"><span class="lg-tag tag-assume">افتراض</span> تقدير للفريق</span>
+              <span class="lg-item"><span class="lg-tag tag-sim">استنتاج</span> نتيجة المحاكاة</span>
             </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
@@ -419,6 +428,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog, getReportProgress, getReport, getReportSections } from '../api/report'
 import ReportDownloadButton from './ReportDownloadButton.vue'
+import ScenarioCompare from './ScenarioCompare.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -5386,7 +5396,43 @@ watch(() => props.reportId, (newId) => {
   .left-panel.report-style { padding: 14px 13px 32px 13px; }
 }
 
+
 .report-download-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 4px 0 14px;
+}
+
+/* دليل قراءة الأرقام */
+.report-source-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bg-subtle, #F8FAFC);
+  border: 1px solid var(--border-frame, #E5E7EB);
+}
+.lg-title { font-size: 12px; font-weight: 800; color: var(--text-secondary, #475569); }
+.lg-item { font-size: 11.5px; color: var(--text-muted, #64748B); display: inline-flex; align-items: center; gap: 5px; }
+.lg-tag {
+  font-size: 10.5px; font-weight: 800; padding: 2px 6px; border-radius: 5px;
+  border: 1px solid transparent;
+}
+.lg-tag.tag-input { background: rgba(37, 99, 235, .12); color: #1D4ED8; border-color: rgba(37, 99, 235, .25); }
+.lg-tag.tag-assume { background: rgba(217, 119, 6, .13); color: #B45309; border-color: rgba(217, 119, 6, .28); }
+.lg-tag.tag-sim { background: rgba(5, 150, 105, .13); color: #047857; border-color: rgba(5, 150, 105, .28); }
+
+@media (max-width: 768px) {
+  .report-source-legend { gap: 7px 10px; padding: 9px 10px; }
+  .lg-item { font-size: 11px; }
+}
+
+.report-download-row-legacy {
   margin: 4px 0 14px;
   display: flex;
   justify-content: flex-start;
