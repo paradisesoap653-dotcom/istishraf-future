@@ -93,7 +93,7 @@
           </p>
           <p v-if="interest" class="pnums-interest-line">
             <b>{{ interest.keyword }}</b> · {{ interest.geo_label || interest.geo }} ·
-            متوسط {{ interest.average }} من 100 · أعلى قمة {{ interest.peak }} ·
+            متوسط {{ arNum(interest.average) }} من ١٠٠ · أعلى قمة {{ arNum(interest.peak) }} ·
             {{ interest.level }} · الاتجاه {{ interest.direction }}
           </p>
         </div>
@@ -287,6 +287,9 @@ const save = async () => {
     saving.value = false
   }
 }
+
+// أرقام عربية حتى لا تختلط الصياغة داخل النص العربي
+const arNum = (value) => String(value).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)])
 
 const readFacebook = async () => {
   if (fbBusy.value) return
