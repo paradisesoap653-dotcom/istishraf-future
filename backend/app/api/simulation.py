@@ -2197,6 +2197,7 @@ def get_platform_inputs(simulation_id: str):
     """أرقام المستخدم الحقيقية لكل منصّة (تُعامل كمعطى في المحاكاة والتقرير)."""
     from ..services import platform_inputs as pi
     from ..services import platforms as pr
+    from ..services import serp_lookup
 
     try:
         platforms = pr.ORDER
@@ -2207,6 +2208,8 @@ def get_platform_inputs(simulation_id: str):
                 "platforms": platforms,
                 "fields": pi.fields_for(platforms),
                 "contact": pi.CONTACT,
+                "interest_field": pi.INTEREST,
+                "serp_ready": serp_lookup.is_configured(),
                 "inputs": inputs,
                 "weights": pi.weights(inputs, pr.DEFAULT_SET),
                 "summary": pi.summary_line(inputs, platforms),
@@ -2245,6 +2248,93 @@ def save_platform_inputs(simulation_id: str):
             "success": False,
             "error": f"تعذر حفظ الأرقام ({detail})",
         }), 500
+
+
+@simulation_bp.route('/<simulation_id>/platform-inputs/lookup', methods=['POST'])
+def lookup_facebook_followers(simulation_id: str):
+    """يقرأ عدد متابعي صفحة فيسبوك من رابطها (SerpApi). لا يُحفظ تلقائيًا."""
+    from ..services import serp_lookup
+
+    payload = request.get_json(silent=True) or {}
+    platform = str(payload.get('platform') or 'facebook').strip().lower()
+    reference = str(payload.get('url') or payload.get('reference') or '').strip()
+    if platform != 'facebook':
+        return jsonify({
+            "success": False,
+            "error": "القراءة من الرابط متاحة لفيسبوك فقط حاليًا",
+        }), 400
+    if not serp_lookup.is_configured():
+        return jsonify({
+            "success": False,
+            "error": "خدمة قراءة الروابط غير مفعّلة (SERPAPI_KEY غير مضبوط)",
+        }), 503
+    try:
+        info = serp_lookup.facebook_profile(reference)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر قراءة صفحة فيسبوك: {exc}")
+        return jsonify({
+            "success": False,
+            "error": f"تعذر قراءة الصفحة ({str(exc)[:140]})",
+        }), 502
+    return jsonify({
+        "success": True,
+        "data": {
+            "platform": "facebook",
+            "followers": info["followers"],
+            "followers_text": info["followers_text"],
+            "approx": True,
+            "name": info["name"],
+            "url": info["url"],
+            "category": info["category"],
+            "phone": info["phone"],
+            "note": "قرأنا الرقم من فيسبوك؛ يعرضه فيسبوك مختصرًا فهو تقريبي ويمكنك تعديله.",
+        },
+    })
+
+
+@simulation_bp.route('/<simulation_id>/platform-inputs/trends', methods=['POST'])
+def fetch_search_interest(simulation_id: str):
+    """يقيس اهتمام البحث عن الكلمة (Google Trends) ويحفظه كمعطى للمحاكاة والتقرير."""
+    from ..services import platform_inputs as pi
+    from ..services import platforms as pr
+    from ..services import serp_lookup
+
+    payload = request.get_json(silent=True) or {}
+    keyword = str(payload.get('keyword') or '').strip()
+    geo = str(payload.get('geo') or 'SD').strip().upper()[:2]
+    months = payload.get('months') or 3
+    if not serp_lookup.is_configured():
+        return jsonify({
+            "success": False,
+            "error": "خدمة قراءة الاتجاهات غير مفعّلة (SERPAPI_KEY غير مضبوط)",
+        }), 503
+    try:
+        trend = serp_lookup.trend_summary(keyword, geo, months)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر قراءة اهتمام البحث: {exc}")
+        return jsonify({
+            "success": False,
+            "error": f"تعذر قراءة الاهتمام من جوجل ({str(exc)[:140]})",
+        }), 502
+    try:
+        current = pi.load(simulation_id)
+        current['interest'] = trend
+        saved = pi.save(simulation_id, current, pr.ORDER)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر حفظ اهتمام البحث: {exc}")
+        saved = current
+    return jsonify({
+        "success": True,
+        "data": {
+            "interest": trend,
+            "inputs": saved,
+            "summary": pi.summary_line(saved, pr.ORDER),
+        },
+    })
 
 
 @simulation_bp.route('/<simulation_id>/posts', methods=['GET'])

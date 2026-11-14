@@ -47,6 +47,13 @@ CONTACT = {
     'hint': 'مثال: ‎+249 9x xxx xxxx',
 }
 
+# اهتمام الناس بكلمة المشروع (من Google Trends) — معطى واقعي لا يُختلق
+INTEREST = {
+    'key': 'interest',
+    'label': 'اهتمام البحث على جوجل',
+    'hint': 'مثال: ركشتك · السودان · آخر ٣ أشهر',
+}
+
 # المفتاح الأساسي الذي يعبّر عن حجم الجمهور في كل منصّة
 _PRIMARY = {
     'facebook': 'followers',
@@ -98,6 +105,9 @@ def validate(raw: Any, platforms: Optional[Sequence[str]] = None) -> Dict[str, D
                 continue
             kept[field] = min(number, MAX_VALUE)
         if kept:
+            # الرقم القادم من فيسبوك مختصر (2.8K) فنعلّمه تقريبيًا
+            if key == 'facebook' and values.get('followers_approx'):
+                kept['followers_approx'] = 1
             clean[key] = kept
     return clean
 
@@ -123,7 +133,53 @@ def validate_with_contact(raw, platforms=None):
         phone = _clean_phone((contact or {}).get('phone') if isinstance(contact, dict) else contact)
         if phone:
             clean['contact'] = {'phone': phone}
+        interest = _clean_interest(raw.get('interest'))
+        if interest:
+            clean['interest'] = interest
     return clean
+
+
+def _clean_interest(raw):
+    """ينقّي ملخّص اهتمام البحث القادم من Google Trends."""
+    if not isinstance(raw, dict):
+        return {}
+    keyword = str(raw.get('keyword') or '').strip()[:60]
+    if not keyword:
+        return {}
+    try:
+        average = float(raw.get('average') or 0)
+    except (TypeError, ValueError):
+        average = 0.0
+    try:
+        peak = int(float(raw.get('peak') or 0))
+    except (TypeError, ValueError):
+        peak = 0
+    if average <= 0 and peak <= 0:
+        return {}
+    months = raw.get('months')
+    try:
+        months = max(1, min(int(months or 3), 12))
+    except (TypeError, ValueError):
+        months = 3
+    geo = str(raw.get('geo') or 'SD').strip().upper()[:2]
+    return {
+        'keyword': keyword,
+        'geo': geo,
+        'geo_label': str(raw.get('geo_label') or '')[:30],
+        'months': months,
+        'average': round(average, 1),
+        'peak': peak,
+        'latest': max(0, min(int(float(raw.get('latest') or 0)), 100)),
+        'direction': str(raw.get('direction') or '')[:12],
+        'level': str(raw.get('level') or '')[:20],
+        'source': 'google_trends',
+    }
+
+
+def interest_of(inputs):
+    if not isinstance(inputs, dict):
+        return {}
+    return _clean_interest(inputs.get('interest'))
 
 
 def contact_of(inputs):
@@ -205,6 +261,18 @@ def targets(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
     return out
 
 
+def _num_ar(value) -> str:
+    """صياغة رقم عربية بسيطة (٤٥٬٠٠٠ / ١٫١)."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if number == int(number):
+        return f"{int(number):,}".replace(',', '٬')
+    text = f"{number:.1f}"
+    return text.replace('.', '٫')
+
+
 def _fmt(number: int) -> str:
     return f"{number:,}".replace(',', '٬')
 
@@ -219,13 +287,24 @@ def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str]) ->
         bits = []
         for field in FIELDS.get(plat, []):
             if field['key'] in values:
-                bits.append(f"{field['label']} {_fmt(values[field['key']])}")
+                mark = ''
+                if plat == 'facebook' and field['key'] == 'followers' and values.get('followers_approx'):
+                    mark = '≈ '
+                bits.append(f"{field['label']} {mark}{_fmt(values[field['key']])}")
         if bits:
             parts.append(f"{platform_registry.label(plat)}: " + '، '.join(bits))
     phone = contact_of(inputs)
     if phone:
         # عزل اتجاه الرقم حتى يظهر بالترتيب الصحيح داخل نص عربي (من اليسار لليمين)
         parts.append(f"رقم التواصل \u2066{phone}\u2069")
+    interest = interest_of(inputs)
+    if interest:
+        where = interest.get('geo_label') or interest.get('geo')
+        parts.append(
+            f"اهتمام البحث على جوجل عن «{interest['keyword']}» ({where}، آخر {_num_ar(interest['months'])} أشهر): "
+            f"متوسط {_num_ar(interest['average'])} من ١٠٠، أعلى قمة {_num_ar(interest['peak'])}، "
+            f"المستوى {interest['level'] or 'غير محدد'}، الاتجاه {interest['direction'] or 'مستقر'}"
+        )
     return ' · '.join(parts)
 
 
@@ -247,6 +326,15 @@ def prompt_block(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
     phone = contact_of(inputs)
     if phone:
         lines.append(f'- رقم التواصل الذي يعرفه الناس ويتناقلونه: {phone} (لا تخترع رقمًا غيره).')
+    interest = interest_of(inputs)
+    if interest:
+        where = interest.get('geo_label') or interest.get('geo')
+        lines.append(
+            f"- اهتمام البحث الحقيقي على جوجل عن «{interest['keyword']}» في {where} خلال آخر "
+            f"{_num_ar(interest['months'])} أشهر: متوسط {_num_ar(interest['average'])} من ١٠٠ "
+            f"(أعلى قمة {_num_ar(interest['peak'])}، الاتجاه {interest['direction'] or 'مستقر'}). "
+            "استخدم هذا كدليل على حجم الاهتمام الفعلي ولا تخترع أرقامًا أخرى."
+        )
     w = weights(inputs, platforms)
     if w:
         share = '، '.join(

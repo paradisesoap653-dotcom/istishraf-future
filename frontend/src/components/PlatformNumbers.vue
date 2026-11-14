@@ -30,6 +30,26 @@
               @input="persistDraft"
             />
           </div>
+
+          <div v-if="group.platform === 'facebook' && serpReady" class="pnums-lookup">
+            <label for="fb-page-url">أو اقرأ المتابعين من رابط الصفحة</label>
+            <div class="pnums-lookup-row">
+              <input
+                id="fb-page-url"
+                type="text"
+                dir="ltr"
+                placeholder="facebook.com/yourpage"
+                v-model="fbUrl"
+                @keyup.enter="readFacebook"
+              />
+              <button type="button" class="pnums-mini" :disabled="fbBusy" @click="readFacebook">
+                {{ fbBusy ? '…' : 'اقرأ' }}
+              </button>
+            </div>
+            <p v-if="fbNote" class="pnums-note pnums-note--small" :class="{ 'pnums-note--err': fbNoteError }">
+              {{ fbNote }}
+            </p>
+          </div>
         </div>
 
         <div class="pnums-group pnums-contact">
@@ -48,6 +68,33 @@
           </div>
           <p class="pnums-note pnums-note--small">
             يُذكر في المحاكاة كنقطة تواصل يعرفها الناس، ويظهر في التقرير كمدخل.
+          </p>
+        </div>
+
+        <div v-if="serpReady" class="pnums-group pnums-interest">
+          <div class="pnums-platform">اهتمام البحث على جوجل (اختياري)</div>
+          <div class="pnums-row">
+            <label for="trend-keyword">الكلمة أو اسم المشروع</label>
+            <input
+              id="trend-keyword"
+              type="text"
+              placeholder="مثال: ركشتك"
+              v-model="trendKeyword"
+              @keyup.enter="readTrend"
+            />
+          </div>
+          <div class="pnums-lookup-row pnums-lookup-row--end">
+            <button type="button" class="pnums-mini" :disabled="trendBusy" @click="readTrend">
+              {{ trendBusy ? '…' : 'اقرأ الاهتمام من جوجل' }}
+            </button>
+          </div>
+          <p v-if="trendNote" class="pnums-note pnums-note--small" :class="{ 'pnums-note--err': trendNoteError }">
+            {{ trendNote }}
+          </p>
+          <p v-if="interest" class="pnums-interest-line">
+            <b>{{ interest.keyword }}</b> · {{ interest.geo_label || interest.geo }} ·
+            متوسط {{ interest.average }} من 100 · أعلى قمة {{ interest.peak }} ·
+            {{ interest.level }} · الاتجاه {{ interest.direction }}
           </p>
         </div>
 
@@ -73,7 +120,12 @@
 
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { getPlatformInputs, savePlatformInputs } from '../api/simulation'
+import {
+  fetchSearchInterest,
+  getPlatformInputs,
+  lookupFacebookProfile,
+  savePlatformInputs
+} from '../api/simulation'
 
 const props = defineProps({
   simulationId: { type: String, required: true }
@@ -98,6 +150,16 @@ const savedSummary = ref('')
 const shareChips = ref([])
 const draftSaved = ref(false)
 const draftKey = () => `istishraf_pnums_draft_${props.simulationId}`
+const serpReady = ref(false)
+const fbUrl = ref('')
+const fbBusy = ref(false)
+const fbNote = ref('')
+const fbNoteError = ref(false)
+const trendKeyword = ref('')
+const trendBusy = ref(false)
+const trendNote = ref('')
+const trendNoteError = ref(false)
+const interest = ref(null)
 
 const ensureGroups = (list) => {
   if (!form.contact) form.contact = { phone: '' }
@@ -123,6 +185,7 @@ const load = async () => {
     const res = await getPlatformInputs(props.simulationId)
     const data = res?.data || res || {}
     fields.value = data.fields || []
+    serpReady.value = Boolean(data.serp_ready)
     ensureGroups(fields.value)
     const inputs = data.inputs || {}
     Object.keys(inputs).forEach((platform) => {
@@ -135,6 +198,8 @@ const load = async () => {
         form[platform][key] = value
       })
     })
+    interest.value = (inputs.interest && inputs.interest.keyword) ? inputs.interest : null
+    if (interest.value) trendKeyword.value = interest.value.keyword
     savedSummary.value = data.summary || ''
     applyWeights(data.weights)
     // إن كانت الأرقام محفوظة سابقًا نطوي البطاقة حتى لا تحتل الشاشة كلها
@@ -186,6 +251,7 @@ const collect = () => {
   })
   const phone = String(form.contact?.phone || '').trim()
   if (phone) out.contact = { phone }
+  if (interest.value && interest.value.keyword) out.interest = interest.value
   return out
 }
 
@@ -222,6 +288,73 @@ const save = async () => {
   }
 }
 
+const readFacebook = async () => {
+  if (fbBusy.value) return
+  const ref = String(fbUrl.value || '').trim()
+  if (!ref) {
+    fbNoteError.value = true
+    fbNote.value = 'الصق رابط الصفحة أولًا.'
+    return
+  }
+  fbBusy.value = true
+  fbNoteError.value = false
+  fbNote.value = 'جارٍ القراءة من فيسبوك…'
+  try {
+    const res = await lookupFacebookProfile(props.simulationId, ref)
+    const data = res?.data || res || {}
+    if (!data.followers) throw new Error('لم يصل عدد متابعين')
+    if (!form.facebook) form.facebook = {}
+    form.facebook.followers = data.followers
+    form.facebook.followers_approx = 1
+    fbNoteError.value = false
+    const name = data.name ? `«${data.name}»: ` : ''
+    fbNote.value = `${name}${data.followers_text || data.followers} متابع تقريبًا (كما يعرضه فيسبوك). راجعه ثم اضغط «احفظ الأرقام».`
+    persistDraft()
+  } catch (err) {
+    fbNoteError.value = true
+    const status = err?.response?.status
+    const msg = err?.response?.data?.error
+    if (status === 503) fbNote.value = msg || 'خدمة قراءة الروابط غير مفعّلة.'
+    else if (status === 400) fbNote.value = msg || 'الرابط غير صالح.'
+    else if (status) fbNote.value = msg || `تعذر القراءة (${status}).`
+    else fbNote.value = 'تعذر الوصول إلى الخدمة (شبكة).'
+  } finally {
+    fbBusy.value = false
+  }
+}
+
+const readTrend = async () => {
+  if (trendBusy.value) return
+  const word = String(trendKeyword.value || '').trim()
+  if (!word) {
+    trendNoteError.value = true
+    trendNote.value = 'اكتب الكلمة التي تريد قياس اهتمام الناس بها.'
+    return
+  }
+  trendBusy.value = true
+  trendNoteError.value = false
+  trendNote.value = 'جارٍ سؤال جوجل…'
+  try {
+    const res = await fetchSearchInterest(props.simulationId, word)
+    const data = res?.data || res || {}
+    interest.value = data.interest || null
+    savedSummary.value = data.summary || savedSummary.value
+    trendNoteError.value = false
+    trendNote.value = 'حُفظ كمعطى، وسيُذكر في المحاكاة والتقرير.'
+    applyWeights(data.weights)
+  } catch (err) {
+    trendNoteError.value = true
+    const status = err?.response?.status
+    const msg = err?.response?.data?.error
+    if (status === 503) trendNote.value = msg || 'خدمة الاتجاهات غير مفعّلة.'
+    else if (status === 400) trendNote.value = msg || 'كلمة غير صالحة.'
+    else if (status) trendNote.value = msg || `تعذر القراءة (${status}).`
+    else trendNote.value = 'تعذر الوصول إلى الخدمة (شبكة).'
+  } finally {
+    trendBusy.value = false
+  }
+}
+
 const clear = async () => {
   Object.keys(form).forEach((platform) => {
     Object.keys(form[platform]).forEach((key) => {
@@ -229,6 +362,9 @@ const clear = async () => {
     })
   })
   if (form.contact) form.contact.phone = ''
+  interest.value = null
+  trendNote.value = ''
+  fbNote.value = ''
   await save()
 }
 
@@ -262,6 +398,22 @@ onMounted(load)
 .pnums-hint { margin-inline-start: auto; font-size: 12px; color: var(--text-secondary, #64748b); }
 .pnums-caret { font-size: 10px; color: var(--text-secondary, #64748b); }
 .pnums-body { padding: 0 14px 14px; }
+.pnums-lookup { margin-top: 8px; }
+.pnums-lookup label { display: block; font-size: 12.5px; color: var(--text-muted, #6b7280); margin-bottom: 4px; }
+.pnums-lookup-row { display: flex; gap: 6px; align-items: center; }
+.pnums-lookup-row--end { justify-content: flex-start; margin-top: 6px; }
+.pnums-lookup-row input { flex: 1; min-width: 0; }
+.pnums-mini {
+  flex: 0 0 auto; padding: 8px 12px; border-radius: 10px; border: 1px solid #1f6feb;
+  background: #eef4ff; color: #12459c; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.pnums-mini:disabled { opacity: .6; cursor: default; }
+.pnums-note--err { color: #b42318; }
+.pnums-interest-line {
+  margin: 6px 0 0; font-size: 12.5px; line-height: 1.7; padding: 8px 10px;
+  background: #f6f9ff; border-radius: 10px;
+}
+.pnums-interest { border-top: 1px dashed var(--border-frame, #e5e7eb); padding-top: 10px; }
 .pnums-contact { border-top: 1px dashed var(--border-frame, #e5e7eb); padding-top: 10px; }
 .pnums-note--small { font-size: 11.5px; margin: 4px 0 0; background: transparent; padding: 0; }
 .pnums-note {

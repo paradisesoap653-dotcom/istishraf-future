@@ -195,3 +195,11 @@ export const getPlatformInputs = (simulationId) =>
 
 export const savePlatformInputs = (simulationId, inputs) =>
   service.post(`/api/simulation/${simulationId}/platform-inputs`, { inputs })
+
+// قراءة عدد متابعي صفحة فيسبوك من رابطها (SerpApi)
+export const lookupFacebookProfile = (simulationId, url) =>
+  service.post(`/api/simulation/${simulationId}/platform-inputs/lookup`, { platform: 'facebook', url })
+
+// قياس اهتمام البحث عن كلمة في بلد (Google Trends) وحفظه كمعطى
+export const fetchSearchInterest = (simulationId, keyword, geo = 'SD') =>
+  service.post(`/api/simulation/${simulationId}/platform-inputs/trends`, { keyword, geo })
