@@ -289,7 +289,10 @@ const save = async () => {
 }
 
 // أرقام عربية حتى لا تختلط الصياغة داخل النص العربي
-const arNum = (value) => String(value).replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)])
+const arNum = (value) =>
+  String(value)
+    .replace(/[0-9]/g, (d) => '٠١٢٣٤٥٦٧٨٩'[Number(d)])
+    .replace('.', '٫')
 
 const readFacebook = async () => {
   if (fbBusy.value) return
