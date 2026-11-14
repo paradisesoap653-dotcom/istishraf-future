@@ -515,8 +515,17 @@ class SimulationRunner:
                     state.simulated_hours = done_rounds
                     state.twitter_current_round = done_rounds
                     state.reddit_current_round = done_rounds
-                    state.twitter_actions_count = summary.get("twitter_actions", 0)
-                    state.reddit_actions_count = summary.get("reddit_actions", 0)
+                    # البطاقتان في الواجهة عامّتان (منصّة عامة / مجتمع)؛
+                    # نضع في الأولى ما جرى على المنصّات العامة وفي الثانية
+                    # ما جرى في المجموعات شبه الخاصة، حتى لا تظهر أصفار.
+                    per_platform = summary.get("platform_actions") or {}
+                    public_keys = ("twitter", "facebook", "tiktok", "reddit")
+                    state.twitter_actions_count = sum(
+                        n for k, n in per_platform.items() if k in public_keys
+                    ) if per_platform else summary.get("twitter_actions", 0)
+                    state.reddit_actions_count = sum(
+                        n for k, n in per_platform.items() if k not in public_keys
+                    ) if per_platform else summary.get("reddit_actions", 0)
                     state.total_actions_count = summary.get("total_actions", 0)
                     state.twitter_running = False
                     state.reddit_running = False

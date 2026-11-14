@@ -13,6 +13,7 @@ from typing import Dict, Any, List
 from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from . import platforms as platform_registry
 
 logger = get_logger("mirofish.serverless_sim")
 
@@ -96,7 +97,7 @@ def write_simulation_artifacts(
     platforms: List[str],
 ) -> Dict[str, int]:
     """يكتب قواعد بيانات SQLite وسجلات actions.jsonl المتوافقة تماماً مع واجهة العرض ومولّد التقارير."""
-    counts = {"twitter": 0, "reddit": 0}
+    counts = {plat: 0 for plat in platforms}
     base_time = datetime.now()
 
     for plat in platforms:
@@ -130,9 +131,13 @@ def write_simulation_artifacts(
                     + "\n"
                 )
                 raw_actions = [e for e in (r_item.get("actions") or []) if isinstance(e, dict)]
-                entries = [e for e in raw_actions if e.get("platform", plat) in (plat, "both")]
-                if not entries:
-                    entries = raw_actions
+                # كل فعل يُكتب في منصّته فقط. الخيار القديم (نسخ كل الأفعال
+                # إلى المنصّة الفارغة) كان يضاعف العدّ ويجعل «أفعال فيسبوك»
+                # تساوي الإجمالي، فحذفناه.
+                entries = [
+                    e for e in raw_actions
+                    if (str(e.get("platform") or "").strip().lower() or plat) in (plat, "both")
+                ]
 
                 round_actions = 0
                 for act in entries:
@@ -219,6 +224,36 @@ def write_simulation_artifacts(
     return counts
 
 
+def _clamp_platforms(rounds_data: List[Dict[str, Any]],
+                     platforms: List[str]) -> List[Dict[str, Any]]:
+    """يمنع المنصّات المخترعة ويضمن أن كل جولة تستخدم منصّتين على الأقل.
+
+    النموذج قد يخرج بـ facebook أو whatsapp من تلقاء نفسه، لكنه أيضًا قد
+    يخترع أسماء غريبة؛ نُلزمه بالقائمة المتاحة فقط.
+    """
+    if not platforms:
+        return rounds_data
+    allowed = set(platforms)
+    used_all: set = set()
+    for r_item in rounds_data:
+        actions = r_item.get("actions") or []
+        seen = set()
+        for i, act in enumerate(actions):
+            raw = str(act.get("platform") or "").strip().lower()
+            raw = {"x": "twitter", "fb": "facebook"}.get(raw, raw)
+            if raw not in allowed:
+                raw = platforms[(i * 3 + 1) % len(platforms)]
+            act["platform"] = raw
+            seen.add(raw)
+        # إن كانت الجولة كلها على منصّة واحدة نوزّع بعض الأفعال على منصّة ثانية
+        if len(platforms) > 1 and len(seen) == 1 and len(actions) > 1:
+            second = next(p for p in platforms if p not in seen)
+            for act in actions[1::2]:
+                act["platform"] = second
+        used_all |= {a.get("platform") for a in actions}
+    return rounds_data
+
+
 def run_serverless_simulation(
     sim_dir: str,
     platform: str = "parallel",
@@ -249,16 +284,19 @@ def run_serverless_simulation(
             )
 
     rounds = max(1, min(int(max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS), 5))
-    platforms = ["twitter", "reddit"] if platform == "parallel" else [platform]
+    platforms = platform_registry.normalize(platform)
 
+    # سقف الوكلاء المشاركين في الجولة: كان 12، والمطلوب توزيعهم على أربع
+    # منصّات، فنرفعه إلى 16 ونضيف لكل وكيل منصّته الأساسية.
     agent_summary = [
         {
             "agent_id": int(p.get("user_id", idx)),
             "name": p.get("name") or p.get("username") or f"Agent {idx}",
             "bio": (p.get("bio") or "")[:140],
             "persona": (p.get("persona") or "")[:160],
+            "primary_platform": platform_registry.preferred_for(idx, platforms),
         }
-        for idx, p in enumerate(profiles[:12])
+        for idx, p in enumerate(profiles[:16])
     ]
     requirement = sim_config.get("simulation_requirement", "")
     narrative = sim_config.get("event_config", {}).get("narrative_direction", "")
@@ -271,11 +309,18 @@ def run_serverless_simulation(
         f"السياق السردي: {narrative}\n"
         f"المنشورات الافتتاحية: {json.dumps(initial_posts, ensure_ascii=False)}\n"
         f"قائمة الوكلاء المتاحين: {json.dumps(agent_summary, ensure_ascii=False)}\n\n"
+        f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
         f"قم بمحاكاة {rounds} جولات زمنية متتالية من النقاش الواقعي والمتنوع (تأييد، تحفظ، أرقام، مقترحات عملية) "
-        "بين هؤلاء الوكلاء باللغة المناسبة للسياق (العربية افتراضياً). في كل جولة أدرج 4 إلى 6 تفاعلات متنوعة بين "
-        "CREATE_POST و CREATE_COMMENT عبر منصتي twitter و reddit.\n"
+        "بين هؤلاء الوكلاء باللغة المناسبة للسياق (العربية افتراضياً). في كل جولة أدرج 4 إلى 8 تفاعلات متنوعة بين "
+        "CREATE_POST و CREATE_COMMENT.\n"
+        "قواعد المنصّات (مهمة):\n"
+        f"- الحقل platform يأخذ قيمة واحدة فقط من: {', '.join(platforms)}. لا تخترع منصّة أخرى.\n"
+        "- في كل جولة استخدم منصّتين مختلفتين على الأقل، ولا تحشر كل الأفعال في منصّة واحدة.\n"
+        "- احترم طبيعة المنصّة في شكل المحتوى: رسالة واتساب قصيرة داخل مجموعة، "
+        "تيك توك وصف قصير لفيديو مع تعليقات، فيسبوك منشور/تعليق، تويتر تغريدة/رد.\n"
+        "- المحتوى العربي فقط (يجوز أسماء الأعلام والأرقام).\n\n"
         "أعد النتيجة بصيغة JSON فقط بهذا الهيكل الدقيق:\n"
-        '{"rounds": [{"round": 1, "actions": [{"agent_id": 0, "platform": "twitter", "action_type": "CREATE_POST", "content": "...", "likes": 18, "shares": 5}]}]}'
+        '{"rounds": [{"round": 1, "actions": [{"agent_id": 0, "platform": "' + platforms[0] + '", "action_type": "CREATE_POST", "content": "...", "likes": 18, "shares": 5}]}]}'
     )
 
     resp = llm.chat_json(
@@ -329,6 +374,7 @@ def run_serverless_simulation(
             }
         ]
     rounds_data = clean_rounds
+    rounds_data = _clamp_platforms(rounds_data, platforms)
 
     counts = write_simulation_artifacts(sim_dir, profiles, rounds_data, platforms)
 
@@ -345,7 +391,9 @@ def run_serverless_simulation(
 
     return {
         "rounds_completed": len(rounds_data),
+        "platforms": platforms,
+        "platform_actions": counts,
         "twitter_actions": counts.get("twitter", 0),
         "reddit_actions": counts.get("reddit", 0),
-        "total_actions": counts.get("twitter", 0) + counts.get("reddit", 0),
+        "total_actions": sum(counts.values()),
     }

@@ -55,6 +55,7 @@
           <!-- شاشة النتيجة -->
           <div v-else class="scn-body">
             <p class="scn-change-tag">التغيير: <b>{{ result.change }}</b></p>
+            <p v-if="platformsLine" class="scn-change-tag">المنصّات: <b>{{ platformsLine }}</b></p>
 
             <div class="scn-table">
               <div class="scn-row scn-row--head">
@@ -120,6 +121,19 @@ const formats = [
   { id: 'docx', label: 'Word' },
   { id: 'md', label: 'Markdown' }
 ]
+
+// أسماء المنصّات بالعربية: تُعرض للتأكيد أن المقارنة جرت على نفس المنصّات
+const PLATFORM_LABELS = {
+  facebook: 'فيسبوك',
+  whatsapp: 'واتساب',
+  tiktok: 'تيك توك',
+  twitter: 'تويتر (إكس)',
+  reddit: 'ريديت'
+}
+const platformsLine = computed(() => {
+  const list = result.value?.platforms || []
+  return list.map((p) => PLATFORM_LABELS[p] || p).join(' · ')
+})
 
 const rows = computed(() => {
   if (!result.value) return []

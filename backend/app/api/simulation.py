@@ -46,7 +46,20 @@ def _get_default_platform(simulation_id: str) -> str:
         manager = SimulationManager()
         state = manager._load_simulation_state(simulation_id)
         if state:
-            return state.get_default_platform()
+            preferred = state.get_default_platform()
+            # المحاكاة صارت تعمل على فيسبوك/واتساب/تيك توك أيضاً؛ إن لم تكن
+            # منصّة الحالة موجودة نختار أول منصّة كُتبت لها وقائع فعلية.
+            base = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+            try:
+                existing = [
+                    p for p in ("facebook", "whatsapp", "tiktok", "twitter", "reddit")
+                    if storage.exists(os.path.join(base, p, "actions.jsonl"))
+                ]
+            except Exception:
+                existing = []
+            if existing and preferred not in existing:
+                return existing[0]
+            return preferred
     except Exception:
         pass
     return "reddit"
@@ -1597,7 +1610,8 @@ def start_simulation():
                     "error": t('api.maxRoundsInvalid')
                 }), 400
 
-        if platform not in ['twitter', 'reddit', 'parallel']:
+        _allowed_platforms = ['twitter', 'reddit', 'facebook', 'whatsapp', 'tiktok', 'parallel']
+        if platform not in _allowed_platforms:
             return jsonify({
                 "success": False,
                 "error": t('api.invalidPlatform', platform=platform)

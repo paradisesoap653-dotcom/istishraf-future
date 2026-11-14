@@ -20,6 +20,7 @@ from ..config import Config
 from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from . import platforms as platform_registry
 
 logger = get_logger('mirofish.scenario')
 
@@ -75,11 +76,37 @@ def _read_jsonl(path: str) -> List[Dict[str, Any]]:
         return []
 
 
+def discover_platforms(simulation_id: str) -> List[str]:
+    """المنصّات التي جرت عليها المحاكاة فعلًا (بقراءة مجلداتها).
+
+    السيناريو **يجب** أن يستخدم نفس المجموعة، وإلا صارت المقارنة بين وضعين
+    مختلفين لا بين افتراضين.
+    """
+    base = _sim_dir(simulation_id)
+    found: List[str] = []
+    try:
+        if storage.exists(base) and os.path.isdir(storage.ensure_local(base)):
+            for entry in sorted(os.listdir(storage.ensure_local(base))):
+                if entry in platform_registry.PLATFORMS and entry not in found:
+                    path = os.path.join(base, entry, 'actions.jsonl')
+                    if storage.exists(path):
+                        found.append(entry)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('تعذر فحص منصّات المحاكاة %s: %s', simulation_id, exc)
+    if found:
+        return [p for p in platform_registry.ORDER if p in found]
+    # تقارير قديمة: نفحص الملفات المعروفة
+    for plat in ('twitter', 'reddit'):
+        if storage.exists(os.path.join(base, plat, 'actions.jsonl')):
+            found.append(plat)
+    return found or ['twitter', 'reddit']
+
+
 def load_run_actions(simulation_id: str) -> List[Dict[str, Any]]:
-    """وقائع المحاكاة المنشورة (twitter + reddit)."""
+    """وقائع المحاكاة المنشورة على كل منصّاتها."""
     base = _sim_dir(simulation_id)
     actions: List[Dict[str, Any]] = []
-    for plat in ('twitter', 'reddit'):
+    for plat in discover_platforms(simulation_id):
         actions.extend(_read_jsonl(os.path.join(base, plat, 'actions.jsonl')))
     return actions
 
@@ -140,7 +167,8 @@ def compute_metrics(actions: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _normalize_llm_actions(rounds_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _normalize_llm_actions(rounds_data: List[Dict[str, Any]],
+                            allowed: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for r_idx, r_item in enumerate(rounds_data, start=1):
         if not isinstance(r_item, dict):
@@ -148,8 +176,15 @@ def _normalize_llm_actions(rounds_data: List[Dict[str, Any]]) -> List[Dict[str, 
         for act in (r_item.get('actions') or []):
             if not isinstance(act, dict):
                 continue
-            raw_platform = str(act.get('platform') or 'twitter').strip().lower()
-            platform = raw_platform if raw_platform in ('twitter', 'reddit') else 'twitter'
+            allowed_set = allowed or ['twitter', 'reddit']
+            raw_platform = str(act.get('platform') or '').strip().lower()
+            raw_platform = {'x': 'twitter', 'fb': 'facebook'}.get(raw_platform, raw_platform)
+            if raw_platform in allowed_set:
+                platform = raw_platform
+            else:
+                # منصّة غير موجودة في المحاكاة الأصلية: نضعها على منصّة مسموحة
+                # بالتناوب بدل حشرها كلها في تويتر.
+                platform = allowed_set[len(out) % len(allowed_set)]
             out.append({
                 'round': r_item.get('round') or r_idx,
                 'platform': platform,
@@ -187,7 +222,10 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 - اللغة: العربية الفصحى المبسطة في كل محتوى الفعل والتحليل. لا تكتب أي جملة
   بالإنجليزية (يجوز أسماء الأعلام والأرقام والرموز فقط).
 - عدد الجولات: {rounds} بالضبط، ولكل جولة ٤ إلى ٦ أفعال.
-- المنصّة الوحيدة المسموحة: "twitter" أو "reddit" (لا تخترع منصات أخرى).
+- المنصّات المسموحة (نفس منصّات المحاكاة الأصلية): {platform_list}.
+  لا تخترع منصّة أخرى، واحترم طبيعة كل منصّة في شكل المحتوى:
+{platform_rules}
+- لا تجعل كل الأفعال على منصّة واحدة: استخدم منصّتين على الأقل في كل جولة.
 - امزج بين "CREATE_POST" و"CREATE_COMMENT" في كل جولة (لا تجعلها منشورات فقط).
 - استخدم agent_id من قائمة الوكلاء أعلاه فقط.
 
@@ -197,7 +235,8 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 
 
 def _run_llm(simulation_id: str, change: str, rounds: int,
-             baseline: Dict[str, Any]) -> Dict[str, Any]:
+             baseline: Dict[str, Any],
+             allowed: Optional[List[str]] = None) -> Dict[str, Any]:
     sim_dir = _sim_dir(simulation_id)
     config_path = os.path.join(sim_dir, 'simulation_config.json')
     config: Dict[str, Any] = {}
@@ -225,8 +264,12 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
             'name': p.get('name') or p.get('username') or f'وكيل {idx}',
             'persona': (p.get('persona') or p.get('bio') or '')[:160],
         }
-        for idx, p in enumerate(profiles[:12])
+        for idx, p in enumerate(profiles[:16])
     ] or [{'agent_id': 0, 'name': 'وكيل 0', 'persona': ''}]
+
+    allowed = list(allowed or ['twitter', 'reddit'])
+    for idx, agent in enumerate(agents):
+        agent['primary_platform'] = platform_registry.preferred_for(idx, allowed)
 
     baseline_txt = json.dumps(
         {k: baseline.get(k) for k in ('interactions', 'posts', 'comments', 'agents',
@@ -241,6 +284,8 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
         baseline=baseline_txt,
         rounds=rounds,
         change=change,
+        platform_list='، '.join(f'"{p}" ({platform_registry.label(p)})' for p in allowed),
+        platform_rules=platform_registry.prompt_block(allowed),
     )
 
     llm = LLMClient()
@@ -293,6 +338,7 @@ def _markdown(payload: Dict[str, Any]) -> str:
         f"# سيناريو مقارن — {payload.get('change', '')}",
         '',
         f"التقرير الأصلي: {payload.get('report_id', '')} · جولات السيناريو: {payload.get('rounds', '')}",
+        f"المنصّات (نفس منصّات المحاكاة الأصلية): {platform_registry.labels(payload.get('platforms') or [])}",
         '',
         '## المؤشرات (محسوبة من وقائع المحاكاة)',
         '',
@@ -306,6 +352,18 @@ def _markdown(payload: Dict[str, Any]) -> str:
         except (TypeError, ValueError):
             diff_txt = '—'
         lines.append(f"- **{label}**: الأصل {a} — السيناريو {b} (الفرق {diff_txt})")
+
+    # توزيع الأفعال على المنصّات: يوضّح أن المقارنة جرت على نفس المجموعة
+    old_plats = old.get('platforms') or {}
+    new_plats = new.get('platforms') or {}
+    if old_plats or new_plats:
+        keys = [p for p in platform_registry.ORDER if p in old_plats or p in new_plats]
+        keys += [p for p in set(old_plats) | set(new_plats) if p not in keys]
+        for key in keys:
+            lines.append(
+                f"- **أفعال {platform_registry.label(key)}**: الأصل {old_plats.get(key, 0)}"
+                f" — السيناريو {new_plats.get(key, 0)}"
+            )
 
     lines += [
         '',
@@ -338,15 +396,16 @@ def run_and_compare(report_id: str, simulation_id: str, change: str,
         raise ScenarioError('لا توجد وقائع محاكاة محفوظة لهذا التقرير، فلا يمكن المقارنة.')
 
     baseline = compute_metrics(baseline_actions)
+    allowed = discover_platforms(simulation_id)
 
     resp: Dict[str, Any] = {}
     actions: List[Dict[str, Any]] = []
     # محاولتان كحد أقصى: النموذج يخرج أحيانًا بالإنجليزية رغم التعليمات،
     # والمنصة عربية بالكامل، فلا نقبل نتيجة غير عربية.
     for attempt in range(2):
-        resp = _run_llm(simulation_id, change, rounds, baseline)
+        resp = _run_llm(simulation_id, change, rounds, baseline, allowed)
         rounds_data = resp.get('rounds') if isinstance(resp.get('rounds'), list) else []
-        actions = _normalize_llm_actions(rounds_data)
+        actions = _normalize_llm_actions(rounds_data, allowed)
         texts = _content_texts(actions) + [str(resp.get('analysis') or '')]
         if actions and _arabic_ratio(texts) >= 0.5:
             break
@@ -364,6 +423,7 @@ def run_and_compare(report_id: str, simulation_id: str, change: str,
         'simulation_id': simulation_id,
         'change': change,
         'rounds': rounds,
+        'platforms': allowed,
         'status': 'completed',
         'baseline': baseline,
         'scenario': scenario_metrics,

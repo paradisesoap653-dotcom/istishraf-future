@@ -564,6 +564,9 @@ ASSUMPTIONS_INSTRUCTIONS = """
 - 〔مدخل〕 … ما ورد نصًا في طلب المستخدم أو في الملفات التي رفعها.
 - 〔افتراض〕 … ما قدّره فريق التحليل/النموذج لأنه غير متوفر في المدخلات.
 - 〔استنتاج〕 … ما نتج فعليًا عن المحاكاة (سلوك الوكلاء والتفاعلات).
+- 〔افتراض〕 توزيع المنصّات: المحاكاة جرت على المنصّات المذكورة (فيسبوك، واتساب،
+  تيك توك، تويتر…) بوصفها تمثيلًا لسلوك الجمهور، وما فيها من أرقام ليس قياسًا
+  مباشرًا من حسابات حقيقية.
 
 اجرد أهم ٥ إلى ٨ أرقام أو تقديرات في التقرير، وأسبق كلًا منها بوسم واحد فقط
 من الوسوم الثلاثة 〔مدخل〕 〔افتراض〕 〔استنتاج〕، وضع سطرًا لكل رقم.
@@ -1948,7 +1951,9 @@ class ReportAgent:
         except Exception:  # noqa: BLE001
             pass
 
-        for platform in ("twitter", "reddit"):
+        from . import platforms as platform_registry
+
+        for platform in platform_registry.ORDER:
             try:
                 raw = storage.read_text(f"simulations/{self.simulation_id}/{platform}/actions.jsonl") or ""
                 lines = [ln for ln in raw.splitlines() if ln.strip()]
@@ -1968,7 +1973,10 @@ class ReportAgent:
                     if text:
                         texts.append(f"- {item.get('agent_name') or item.get('user') or 'عضو'}: {text[:130]}")
                 if texts:
-                    parts.append(f"نماذج من تفاعلات {platform} ({len(lines)} حدثًا):\n" + "\n".join(texts))
+                    parts.append(
+                        f"نماذج من تفاعلات {platform_registry.label(platform)}"
+                        f" ({len(lines)} حدثًا):\n" + "\n".join(texts)
+                    )
             except Exception:  # noqa: BLE001
                 continue
 
