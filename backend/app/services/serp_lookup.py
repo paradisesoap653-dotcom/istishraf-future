@@ -135,8 +135,8 @@ def trend_summary(keyword: str, geo: str = 'SD', months: int = 3) -> Dict[str, A
             direction = 'مستقر'
     else:
         direction = 'مستقر'
-    if average < 1:
-        # بيانات ضئيلة جدًا: لا يصحّ وصفها بصعود أو هبوط
+    if average < 3:
+        # بيانات ضئيلة جدًا (قفزات متفرقة بين أصفار): لا يصحّ وصفها بصعود أو هبوط
         direction = 'لا اتجاه واضح'
     if average < 3:
         level = 'منخفض جدًا'
