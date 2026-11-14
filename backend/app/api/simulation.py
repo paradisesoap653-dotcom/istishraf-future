@@ -2206,6 +2206,7 @@ def get_platform_inputs(simulation_id: str):
             "data": {
                 "platforms": platforms,
                 "fields": pi.fields_for(platforms),
+                "contact": pi.CONTACT,
                 "inputs": inputs,
                 "weights": pi.weights(inputs, pr.DEFAULT_SET),
                 "summary": pi.summary_line(inputs, platforms),

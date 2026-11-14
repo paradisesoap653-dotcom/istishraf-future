@@ -40,6 +40,13 @@ FIELDS: Dict[str, List[Dict[str, str]]] = {
     ],
 }
 
+# حقل تواصل واحد (جوال/واتساب) يعرفه الناس ويُذكر في المحاكاة والتقرير
+CONTACT = {
+    'key': 'phone',
+    'label': 'رقم واتساب / خط التواصل',
+    'hint': 'مثال: ‎+249 9x xxx xxxx',
+}
+
 # المفتاح الأساسي الذي يعبّر عن حجم الجمهور في كل منصّة
 _PRIMARY = {
     'facebook': 'followers',
@@ -93,6 +100,37 @@ def validate(raw: Any, platforms: Optional[Sequence[str]] = None) -> Dict[str, D
         if kept:
             clean[key] = kept
     return clean
+
+
+def _clean_phone(raw):
+    """يقبل أرقام الهواتف بصياغات مختلفة ويحتفظ بها كما كتبها المستخدم."""
+    if not isinstance(raw, str):
+        return ''
+    text = raw.strip()
+    digits = sum(1 for ch in text if ch.isdigit())
+    if digits < 6:
+        return ''
+    if any(not (ch.isdigit() or ch in '+-() ') for ch in text):
+        return ''
+    return text[:24]
+
+
+def validate_with_contact(raw, platforms=None):
+    """مثل validate، مع حفظ رقم التواصل إن وُجد."""
+    clean = validate(raw, platforms)
+    if isinstance(raw, dict):
+        contact = raw.get('contact') or {}
+        phone = _clean_phone((contact or {}).get('phone') if isinstance(contact, dict) else contact)
+        if phone:
+            clean['contact'] = {'phone': phone}
+    return clean
+
+
+def contact_of(inputs):
+    if not isinstance(inputs, dict):
+        return ''
+    contact = inputs.get('contact') or {}
+    return _clean_phone(contact.get('phone')) if isinstance(contact, dict) else ''
 
 
 def has_inputs(inputs: Any) -> bool:
@@ -184,6 +222,9 @@ def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str]) ->
                 bits.append(f"{field['label']} {_fmt(values[field['key']])}")
         if bits:
             parts.append(f"{platform_registry.label(plat)}: " + '، '.join(bits))
+    phone = contact_of(inputs)
+    if phone:
+        parts.append(f"رقم التواصل {phone}")
     return ' · '.join(parts)
 
 
@@ -202,6 +243,9 @@ def prompt_block(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
             for f in FIELDS.get(plat, []) if f['key'] in values
         ]
         lines.append(f'- {platform_registry.label(plat)}: ' + '، '.join(bits))
+    phone = contact_of(inputs)
+    if phone:
+        lines.append(f'- رقم التواصل الذي يعرفه الناس ويتناقلونه: {phone} (لا تخترع رقمًا غيره).')
     w = weights(inputs, platforms)
     if w:
         share = '، '.join(
@@ -235,7 +279,7 @@ def load(simulation_id: str) -> Dict[str, Dict[str, int]]:
         from ..models import storage
 
         raw = storage.read_json(_path(simulation_id))
-        return validate(raw or {})
+        return validate_with_contact(raw or {})
     except Exception:  # noqa: BLE001
         return {}
 
@@ -244,6 +288,6 @@ def save(simulation_id: str, raw: Any,
          platforms: Optional[Sequence[str]] = None) -> Dict[str, Dict[str, int]]:
     from ..models import storage
 
-    clean = validate(raw, platforms)
+    clean = validate_with_contact(raw, platforms)
     storage.write_json(_path(simulation_id), clean)
     return clean

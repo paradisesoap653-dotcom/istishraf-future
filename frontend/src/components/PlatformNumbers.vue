@@ -32,6 +32,25 @@
           </div>
         </div>
 
+        <div class="pnums-group pnums-contact">
+          <div class="pnums-platform">رقم التواصل (اختياري)</div>
+          <div class="pnums-row">
+            <label for="contact-phone">رقم واتساب / خط التواصل</label>
+            <input
+              id="contact-phone"
+              type="tel"
+              inputmode="tel"
+              dir="ltr"
+              placeholder="‎+249 9x xxx xxxx"
+              v-model="form.contact.phone"
+              @input="persistDraft"
+            />
+          </div>
+          <p class="pnums-note pnums-note--small">
+            يُذكر في المحاكاة كنقطة تواصل يعرفها الناس، ويظهر في التقرير كمدخل.
+          </p>
+        </div>
+
         <p v-if="error" class="pnums-status pnums-status--err">{{ error }}</p>
         <div class="pnums-actions">
           <button type="button" class="pnums-save" :disabled="saving" @click="save">
@@ -81,6 +100,7 @@ const draftSaved = ref(false)
 const draftKey = () => `istishraf_pnums_draft_${props.simulationId}`
 
 const ensureGroups = (list) => {
+  if (!form.contact) form.contact = { phone: '' }
   list.forEach((group) => {
     if (!form[group.platform]) form[group.platform] = {}
     group.fields.forEach((field) => {
@@ -106,6 +126,11 @@ const load = async () => {
     ensureGroups(fields.value)
     const inputs = data.inputs || {}
     Object.keys(inputs).forEach((platform) => {
+      if (platform === 'contact') {
+        form.contact = { phone: (inputs.contact || {}).phone || '' }
+        return
+      }
+      if (!form[platform]) form[platform] = {}
       Object.entries(inputs[platform] || {}).forEach(([key, value]) => {
         form[platform][key] = value
       })
@@ -120,6 +145,10 @@ const load = async () => {
         const draft = JSON.parse(localStorage.getItem(draftKey()) || 'null')
         if (draft && typeof draft === 'object') {
           Object.entries(draft).forEach(([platform, values]) => {
+            if (platform === 'contact') {
+              form.contact = { phone: (values || {}).phone || '' }
+              return
+            }
             if (!form[platform]) form[platform] = {}
             Object.entries(values || {}).forEach(([key, value]) => { form[platform][key] = value })
           })
@@ -155,6 +184,8 @@ const collect = () => {
     })
     if (Object.keys(kept).length) out[platform] = kept
   })
+  const phone = String(form.contact?.phone || '').trim()
+  if (phone) out.contact = { phone }
   return out
 }
 
@@ -197,6 +228,7 @@ const clear = async () => {
       form[platform][key] = ''
     })
   })
+  if (form.contact) form.contact.phone = ''
   await save()
 }
 
@@ -230,6 +262,8 @@ onMounted(load)
 .pnums-hint { margin-inline-start: auto; font-size: 12px; color: var(--text-secondary, #64748b); }
 .pnums-caret { font-size: 10px; color: var(--text-secondary, #64748b); }
 .pnums-body { padding: 0 14px 14px; }
+.pnums-contact { border-top: 1px dashed var(--border-frame, #e5e7eb); padding-top: 10px; }
+.pnums-note--small { font-size: 11.5px; margin: 4px 0 0; background: transparent; padding: 0; }
 .pnums-note {
   margin: 0 0 12px;
   font-size: 12.5px;
