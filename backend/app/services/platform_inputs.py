@@ -170,7 +170,7 @@ def _clean_interest(raw):
         'average': round(average, 1),
         'peak': peak,
         'latest': max(0, min(int(float(raw.get('latest') or 0)), 100)),
-        'direction': str(raw.get('direction') or '')[:12],
+        'direction': str(raw.get('direction') or '')[:24],
         'level': str(raw.get('level') or '')[:20],
         'source': 'google_trends',
     }
