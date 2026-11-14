@@ -2596,9 +2596,26 @@ class ReportManager:
         """
         folder = cls._get_report_folder(report_id)
         
+        # سطر مدخلات صاحب المشروع: يُكتب حتمًا في رأس التقرير (لا نتركه للنموذج
+        # حتى لا يُحذف أو يُنسى، وحتى يعرف القارئ أن هذه أرقام حقيقية لا افتراضات).
+        inputs_header = ''
+        try:
+            report = cls.get_report(report_id)
+            sim_id = getattr(report, "simulation_id", None) if report else None
+            if sim_id:
+                from . import platform_inputs as _pi
+                from . import platforms as _pr
+
+                line = _pi.summary_line(_pi.load(sim_id), _pr.ORDER)
+                if line:
+                    inputs_header = f"> **أرقام مقدَّمة من صاحب المشروع (مدخل):** {line}\n\n"
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر إدراج سطر أرقام صاحب المشروع: %s", exc)
+
         # 构建报告头部
         md_content = f"# {outline.title}\n\n"
         md_content += f"> {outline.summary}\n\n"
+        md_content += inputs_header
         md_content += f"---\n\n"
         
         # 按顺序读取所有章节文件
