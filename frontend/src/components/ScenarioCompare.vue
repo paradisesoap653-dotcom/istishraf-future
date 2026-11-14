@@ -83,7 +83,7 @@
                 :key="f.id"
                 class="scn-dl"
                 type="button"
-                :disabled="downloading"
+                :disabled="!!downloading"
                 @click="downloadFile(f.id)"
               >{{ downloading === f.id ? '…' : f.label }}</button>
             </div>
@@ -152,7 +152,7 @@ const rows = computed(() => {
 const downloadUrl = (format) =>
   getScenarioDownloadUrl(props.reportId, result.value?.scenario_id, format)
 
-const downloading = ref('')
+const downloading = ref(false)
 
 // التحميل يمرّ عبر axios حتى يُرسل رمز الدخول؛ الرابط المباشر يُرفض بـ401.
 const downloadFile = async (format) => {
@@ -178,7 +178,7 @@ const downloadFile = async (format) => {
   } catch (err) {
     error.value = err?.message || 'تعذر تنزيل المقارنة'
   } finally {
-    downloading.value = ''
+    downloading.value = false
   }
 }
 
