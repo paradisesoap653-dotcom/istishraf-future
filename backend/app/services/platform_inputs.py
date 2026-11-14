@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import platforms as platform_registry
@@ -217,7 +218,15 @@ def prompt_block(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
 # ---------------------------------------------------------------- storage
 
 def _path(simulation_id: str) -> str:
-    return f"simulations/{simulation_id}/platform_inputs.json"
+    """مسار مطلق تحت مجلد الرفع.
+
+    مهم: دوال التخزين في هذا المشروع تعمل على مسارات مطلقة (تُحوَّل لاحقًا إلى
+    مفتاح نسبي في Postgres). تمرير مسار نسبي كان يُحلّ مقابل مجلد العمل على
+    Vercel (للقراءة فقط) فيفشل الحفظ.
+    """
+    from ..config import Config
+
+    return os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id, 'platform_inputs.json')
 
 
 def load(simulation_id: str) -> Dict[str, Dict[str, int]]:
