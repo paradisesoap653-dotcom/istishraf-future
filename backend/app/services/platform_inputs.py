@@ -224,7 +224,8 @@ def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str]) ->
             parts.append(f"{platform_registry.label(plat)}: " + '، '.join(bits))
     phone = contact_of(inputs)
     if phone:
-        parts.append(f"رقم التواصل {phone}")
+        # عزل اتجاه الرقم حتى يظهر بالترتيب الصحيح داخل نص عربي (من اليسار لليمين)
+        parts.append(f"رقم التواصل \u2066{phone}\u2069")
     return ' · '.join(parts)
 
 
