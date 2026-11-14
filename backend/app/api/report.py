@@ -602,7 +602,8 @@ def download_report(report_id: str):
 
         ascii_name = f"istishraf-{report_id}{ext}"
         utf8_name = quote(f"تقرير-{report_id}{ext}")
-        response = Response(data, mimetype=mime)
+        # نمرّر النوع الأساسي فقط؛ Flask يضيف charset=utf-8 للنصوص تلقائيًا.
+        response = Response(data, mimetype=mime.split(';')[0])
         response.headers['Content-Disposition'] = (
             f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
         )
