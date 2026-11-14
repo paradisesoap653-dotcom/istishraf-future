@@ -184,6 +184,8 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 على سلوك الناس. غيّر ما يتغيّر فعلًا بسبب التغيير، ولا تكرر النص الأصلي حرفيًا.
 
 قواعد إلزامية:
+- اللغة: العربية الفصحى المبسطة في كل محتوى الفعل والتحليل. لا تكتب أي جملة
+  بالإنجليزية (يجوز أسماء الأعلام والأرقام والرموز فقط).
 - عدد الجولات: {rounds} بالضبط، ولكل جولة ٤ إلى ٦ أفعال.
 - المنصّة الوحيدة المسموحة: "twitter" أو "reddit" (لا تخترع منصات أخرى).
 - امزج بين "CREATE_POST" و"CREATE_COMMENT" في كل جولة (لا تجعلها منشورات فقط).
@@ -254,6 +256,27 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
     return resp
 
 
+def _arabic_ratio(texts: List[str]) -> float:
+    """نسبة الأحرف العربية من كل الأحرف الهجائية: كشف لخروج الناتج بلغة أخرى."""
+    arabic = latin = 0
+    for text in texts:
+        for ch in text or '':
+            code = ord(ch)
+            if 0x0600 <= code <= 0x06FF:
+                arabic += 1
+            elif ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'):
+                latin += 1
+    total = arabic + latin
+    return (arabic / total) if total else 1.0
+
+
+def _content_texts(actions: List[Dict[str, Any]]) -> List[str]:
+    return [
+        str((a.get('action_args') or {}).get('content') or '')
+        for a in actions
+    ]
+
+
 def _markdown(payload: Dict[str, Any]) -> str:
     """نسخة قابلة للتحميل بصيغ التقرير نفسها."""
     old = payload['baseline']
@@ -316,12 +339,23 @@ def run_and_compare(report_id: str, simulation_id: str, change: str,
         raise ScenarioError('لا توجد وقائع محاكاة محفوظة لهذا التقرير، فلا يمكن المقارنة.')
 
     baseline = compute_metrics(baseline_actions)
-    resp = _run_llm(simulation_id, change, rounds, baseline)
 
-    rounds_data = resp.get('rounds') if isinstance(resp.get('rounds'), list) else []
-    actions = _normalize_llm_actions(rounds_data)
+    resp: Dict[str, Any] = {}
+    actions: List[Dict[str, Any]] = []
+    # محاولتان كحد أقصى: النموذج يخرج أحيانًا بالإنجليزية رغم التعليمات،
+    # والمنصة عربية بالكامل، فلا نقبل نتيجة غير عربية.
+    for attempt in range(2):
+        resp = _run_llm(simulation_id, change, rounds, baseline)
+        rounds_data = resp.get('rounds') if isinstance(resp.get('rounds'), list) else []
+        actions = _normalize_llm_actions(rounds_data)
+        texts = _content_texts(actions) + [str(resp.get('analysis') or '')]
+        if actions and _arabic_ratio(texts) >= 0.5:
+            break
+        logger.warning('السيناريو خرج بغير العربية (محاولة %s)', attempt + 1)
+        actions = []
+
     if not actions:
-        raise ScenarioError('لم تُنتج المحاكاة تفاعلات كافية لهذا السيناريو، حاول بصياغة أخرى.')
+        raise ScenarioError('لم يخرج السيناريو بالعربية، حاول مرة أخرى أو أعد صياغة التغيير.')
 
     scenario_metrics = compute_metrics(actions)
 
