@@ -1,8 +1,5 @@
 <template>
   <div class="simulation-panel">
-    <!-- أرقام المستخدم الحقيقية: تُدخل قبل التشغيل فتُوزَّن بها الأفعال -->
-    <PlatformNumbers v-if="simulationId" :simulation-id="simulationId" />
-
     <!-- Top Control Bar -->
     <div class="control-bar">
       <div class="status-group">
@@ -290,7 +287,6 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import PlatformNumbers from './PlatformNumbers.vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {

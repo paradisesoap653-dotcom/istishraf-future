@@ -2,7 +2,7 @@
   <section class="pnums" :class="{ 'pnums--open': open }">
     <button type="button" class="pnums-head" @click="open = !open">
       <span class="pnums-title">أرقامك الحقيقية <span class="pnums-opt">(اختياري)</span></span>
-      <span class="pnums-hint">{{ savedSummary ? 'محفوظة ✓' : 'أضفها ليصير التوزيع أدق' }}</span>
+      <span class="pnums-hint">{{ savedSummary ? 'محفوظة ✓ اضغط للتعديل' : 'اضغط هنا واكتب أرقامك' }}</span>
       <span class="pnums-caret">{{ open ? '▲' : '▼' }}</span>
     </button>
 
@@ -66,7 +66,7 @@ const PLATFORM_LABELS = {
   reddit: 'ريديت'
 }
 
-const open = ref(false)
+const open = ref(true)  // مفتوحة ابتداءً: هي أول ما يحتاجه المستخدم
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
@@ -159,7 +159,9 @@ onMounted(load)
 .pnums {
   margin: 0 0 12px;
   border: 1px solid var(--border-frame, #e5e7eb);
+  border-inline-start: 4px solid #1f6feb;
   border-radius: 14px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .06);
   background: var(--surface, #fff);
   overflow: hidden;
 }

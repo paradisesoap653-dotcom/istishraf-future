@@ -40,6 +40,11 @@
       </div>
     </header>
 
+    <!-- أرقام المستخدم: أعلى الصفحة حتى لا تُدفن تحت لوحة الشبكة على الهاتف -->
+    <div v-if="currentSimulationId" class="pnums-slot">
+      <PlatformNumbers :simulation-id="currentSimulationId" />
+    </div>
+
     <!-- Main Content Area -->
     <main class="content-area">
       <!-- Left Panel: Graph -->
@@ -73,11 +78,25 @@
   </div>
 </template>
 
+<style scoped>
+.pnums-slot {
+  padding: 10px 14px 0;
+  max-width: 980px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+@media (max-width: 600px) {
+  .pnums-slot { padding: 8px 10px 0; }
+}
+</style>
+
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step3Simulation from '../components/Step3Simulation.vue'
+import PlatformNumbers from '../components/PlatformNumbers.vue'
 import { getProject, getGraphData } from '../api/graph'
 import { getSimulation, getSimulationConfig, stopSimulation, closeSimulationEnv, getEnvStatus } from '../api/simulation'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
