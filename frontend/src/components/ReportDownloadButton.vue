@@ -1,5 +1,5 @@
 <template>
-  <div class="report-download" ref="rootEl">
+  <div class="report-download" :class="{ compact }" ref="rootEl" @click.stop>
     <button
       class="dl-trigger"
       type="button"
@@ -13,7 +13,7 @@
         <line x1="12" y1="15" x2="12" y2="3"></line>
       </svg>
       <span v-else class="spinner" aria-hidden="true"></span>
-      <span>{{ busy ? 'جارٍ التجهيز…' : 'تحميل التقرير' }}</span>
+      <span>{{ busy ? 'جارٍ التجهيز…' : (compact ? 'تحميل' : 'تحميل التقرير') }}</span>
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9"></polyline>
       </svg>
@@ -46,7 +46,9 @@ import service from '../api'
 
 const props = defineProps({
   reportId: { type: String, required: true },
-  fileName: { type: String, default: '' }
+  fileName: { type: String, default: '' },
+  // نسخة مصغّرة تُستخدم داخل القوائم والبطاقات
+  compact: { type: Boolean, default: false }
 })
 
 const formats = [
@@ -136,6 +138,11 @@ const download = async (format) => {
 }
 .dl-trigger:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 18px rgba(255, 69, 0, .18); }
 .dl-trigger:disabled { opacity: .6; cursor: not-allowed; }
+
+.compact .dl-trigger { padding: 5px 9px; border-radius: 9px; font-size: 12.5px; gap: 5px; }
+.compact .dl-trigger svg { width: 14px; height: 14px; }
+.compact .dl-menu { min-width: 225px; }
+.compact .dl-msg { font-size: 11.5px; }
 
 .spinner {
   width: 15px; height: 15px; border-radius: 50%;

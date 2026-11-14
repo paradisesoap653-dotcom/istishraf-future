@@ -33,6 +33,13 @@
         <div class="card-header">
           <span class="card-id">{{ formatSimulationId(project.simulation_id) }}</span>
           <div class="card-status-icons">
+            <!-- تحميل تقرير المشروع مباشرة من القائمة -->
+            <ReportDownloadButton
+              v-if="project.report_id"
+              compact
+              :report-id="project.report_id"
+              :file-name="project.project_name || project.name || ''"
+            />
             <span 
               class="status-icon" 
               :class="{ available: project.project_id, unavailable: !project.project_id }"
@@ -179,6 +186,15 @@
                 <span class="btn-text">{{ $t('history.step4Button') }}</span>
               </button>
             </div>
+
+            <!-- تحميل التقرير بصيغه -->
+            <div v-if="selectedProject.report_id" class="modal-download-row">
+              <ReportDownloadButton
+                :report-id="selectedProject.report_id"
+                :file-name="selectedProject.project_name || selectedProject.name || ''"
+              />
+            </div>
+
             <!-- 不可回放提示 -->
             <div class="modal-playback-hint">
               <span class="hint-text">{{ $t('history.replayHint') }}</span>
@@ -195,6 +211,7 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import ReportDownloadButton from './ReportDownloadButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -1347,4 +1364,6 @@ onUnmounted(() => {
   text-align: center;
   line-height: 1.5;
 }
+
+.modal-download-row { margin: 6px 0 10px; display: flex; justify-content: center; }
 </style>
