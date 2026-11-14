@@ -139,9 +139,9 @@ const rows = computed(() => {
   }
 
   return [
-    build('عدد التفاعلات', 'interactions'),
-    build('المنشورات', 'posts'),
-    build('التعليقات', 'comments'),
+    build('تفاعلات/جولة', 'interactions_per_round'),
+    build('منشورات/جولة', 'posts_per_round'),
+    build('تعليقات/جولة', 'comments_per_round'),
     build('الوكلاء المشاركون', 'agents'),
     build('نبرة مؤيدة', 'support_pct', '٪'),
     build('نبرة متحفظة', 'skeptic_pct', '٪')

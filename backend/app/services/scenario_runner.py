@@ -31,11 +31,13 @@ MAX_CHANGE_LEN = 400
 # كلمات مؤشر النبرة (تقريبي، شفاف للمستخدم)
 _SUPPORT_WORDS = (
     'أؤيد', 'مؤيد', 'موافق', 'أوافق', 'ممتاز', 'جيد', 'مفيد', 'إيجابي',
-    'تأييد', 'مناسب', 'مقبول', 'حل', 'نجاح', 'مرحب', 'مشجع', 'أحب',
+    'تأييد', 'مناسب', 'مقبول', 'قبول', 'حل', 'نجاح', 'مرحب', 'مشجع', 'أحب',
+    'رضا', 'ارتياح', 'تحسن', 'دعم', 'إشادة', 'ثقة', 'مرونة', 'تحسين', 'إقبال',
 )
 _SKEPTIC_WORDS = (
     'لكن', 'مخاوف', 'خوف', 'رفض', 'سيئ', 'خطر', 'مشكلة', 'سلبي', 'انتقاد',
     'تحفظ', 'استغلال', 'شكوى', 'تذمر', 'غير مقبول', 'غاضب', 'احتجاج',
+    'مطالب', 'قلق', 'تحذير', 'سخط', 'عدم رضا', 'تأخير', 'انهيار', 'فوضى',
 )
 
 
@@ -116,8 +118,16 @@ def compute_metrics(actions: List[Dict[str, Any]]) -> Dict[str, Any]:
     def pct(n: int) -> float:
         return round(100.0 * n / total_texts, 1)
 
+    n_rounds = len(rounds) or 1
+
+    def per_round(n: int) -> float:
+        return round(n / n_rounds, 1)
+
     return {
         'interactions': len(actions),
+        'interactions_per_round': per_round(len(actions)),
+        'posts_per_round': per_round(len(posts)),
+        'comments_per_round': per_round(len(comments)),
         'posts': len(posts),
         'comments': len(comments),
         'agents': len(participants),
@@ -138,9 +148,11 @@ def _normalize_llm_actions(rounds_data: List[Dict[str, Any]]) -> List[Dict[str, 
         for act in (r_item.get('actions') or []):
             if not isinstance(act, dict):
                 continue
+            raw_platform = str(act.get('platform') or 'twitter').strip().lower()
+            platform = raw_platform if raw_platform in ('twitter', 'reddit') else 'twitter'
             out.append({
                 'round': r_item.get('round') or r_idx,
-                'platform': act.get('platform') or 'twitter',
+                'platform': platform,
                 'agent_id': act.get('agent_id'),
                 'action_type': (act.get('action_type') or 'CREATE_POST').upper(),
                 'action_args': {'content': act.get('content') or ''},
@@ -170,6 +182,12 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 
 اكتب تفاعلات واقعية ومتنوعة (تأييد، تحفظ، أرقام، مقترحات عملية) تُظهر أثر التغيير
 على سلوك الناس. غيّر ما يتغيّر فعلًا بسبب التغيير، ولا تكرر النص الأصلي حرفيًا.
+
+قواعد إلزامية:
+- عدد الجولات: {rounds} بالضبط، ولكل جولة ٤ إلى ٦ أفعال.
+- المنصّة الوحيدة المسموحة: "twitter" أو "reddit" (لا تخترع منصات أخرى).
+- امزج بين "CREATE_POST" و"CREATE_COMMENT" في كل جولة (لا تجعلها منشورات فقط).
+- استخدم agent_id من قائمة الوكلاء أعلاه فقط.
 
 أعد JSON فقط بهذا الشكل:
 {{"rounds": [{{"round": 1, "actions": [{{"agent_id": 0, "platform": "twitter", "action_type": "CREATE_POST", "content": "..."}}]}}],
@@ -241,9 +259,9 @@ def _markdown(payload: Dict[str, Any]) -> str:
     old = payload['baseline']
     new = payload['scenario']
     rows = [
-        ('عدد التفاعلات', old['interactions'], new['interactions']),
-        ('عدد المنشورات', old['posts'], new['posts']),
-        ('عدد التعليقات', old['comments'], new['comments']),
+        ('تفاعلات لكل جولة', old.get('interactions_per_round'), new.get('interactions_per_round')),
+        ('منشورات لكل جولة', old.get('posts_per_round'), new.get('posts_per_round')),
+        ('تعليقات لكل جولة', old.get('comments_per_round'), new.get('comments_per_round')),
         ('الوكلاء المشاركون', old['agents'], new['agents']),
         ('نبرة مؤيدة %', old['support_pct'], new['support_pct']),
         ('نبرة متحفظة %', old['skeptic_pct'], new['skeptic_pct']),
