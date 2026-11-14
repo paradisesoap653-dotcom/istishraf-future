@@ -213,6 +213,25 @@ def _is_rate_limit_error(error: Exception) -> bool:
     )
 
 
+def _is_provider_hard_error(error: Exception) -> bool:
+    """رفض من المزوّد لا يُصلحه الانتظار (طلب غير مقبول، عطل داخلي…) → نجرّب مزوّدًا آخر.
+
+    بدون هذا، خطأ 400 في المزوّد الأساسي يُسقط المهمة كلها رغم وجود بدائل سليمة.
+    استثناءان مقصودان:
+      - أخطاء صيغة JSON (response_format) يُعالجها chat_json بإعادة محاولة بلا صيغة.
+      - أخطاء الحصة/المعدّل/غياب النموذج لها معالجاتها الخاصة قبل هذا الفحص.
+    """
+
+    if _is_response_format_unsupported(error):
+        return False
+    status = getattr(error, "status_code", None)
+    if not isinstance(status, int):
+        return False
+    if status in {400, 404, 405, 406, 409, 410, 415, 422, 424, 500, 501, 502, 503, 504, 529}:
+        return True
+    return 500 <= status <= 599
+
+
 class LLMClient:
     """LLM客户端"""
     
@@ -425,6 +444,22 @@ class LLMClient:
                         continue
                     if rotations < len(self._candidates) + 2 and self._advance_candidate(detail):
                         rotations += 1
+                        attempts = 0
+                        guard_messages = []
+                        continue
+                    raise
+
+                # أي رفض صريح آخر من المزوّد (غير الحصة والمعدّل والنموذج) لا يُصلحه
+                # الانتظار: ننتقل إلى المزوّد/النموذج التالي بدل إسقاط المهمة.
+                if _is_provider_hard_error(exc) and rotations < len(self._candidates) + 2:
+                    rotations += 1
+                    logger.warning(
+                        "المزوّد %s رفض الطلب (status=%s) — الانتقال إلى البديل التالي: %s",
+                        candidate["label"],
+                        getattr(exc, "status_code", "?"),
+                        detail[:200],
+                    )
+                    if self._advance_candidate(detail):
                         attempts = 0
                         guard_messages = []
                         continue

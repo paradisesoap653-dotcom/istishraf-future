@@ -43,6 +43,11 @@ def _client_for(sequence):
     client.client = SimpleNamespace(
         chat=SimpleNamespace(completions=sequence)
     )
+    # سلسلة المرشّحين: هذه الاختبارات تعمل بمزوّد واحد فقط.
+    client._candidates = [
+        {"client": client.client, "model": "compatible-model", "label": "compatible-model"}
+    ]
+    client._candidate_index = 0
     return client
 
 
@@ -257,3 +262,29 @@ def test_chat_json_reports_missing_choices_without_retrying_forever():
         )
 
     assert len(sequence.calls) == 2
+
+
+def test_hard_provider_error_advances_to_fallback_candidate():
+    """رفض صريح (400) من المزوّد الأساسي يجب أن ينتقل للبديل لا أن يُسقط المهمة."""
+    primary = CompletionSequence(
+        ProviderError(
+            status_code=400,
+            body={"error": {"message": "request failed for an unrelated reason"}},
+        )
+    )
+    backup = CompletionSequence(_response("تم"))
+    client = _client_for(primary)
+    client._candidates = [
+        {"client": client.client, "model": "primary", "label": "primary"},
+        {
+            "client": SimpleNamespace(chat=SimpleNamespace(completions=backup)),
+            "model": "backup",
+            "label": "backup",
+        },
+    ]
+    client._candidate_index = 0
+
+    assert client.chat(messages=[{"role": "user", "content": "مرحبا"}], max_tokens=64) == "تم"
+    assert len(primary.calls) == 1
+    assert len(backup.calls) == 1
+    assert client._candidate_index == 1
