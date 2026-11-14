@@ -37,3 +37,8 @@ pydantic>=2.0.0
 
 # خادم الإنتاج السحابي (Production WSGI Server)
 gunicorn>=22.0.0
+
+# ============= تصدير التقارير (PDF عربي) =============
+# fpdf2 مع uharfbuzz لتشكيل الحروف العربية داخل PDF، وخط Cairo مضمّن في backend/app/assets
+fpdf2>=2.7.9
+uharfbuzz>=0.39.0

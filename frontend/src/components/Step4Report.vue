@@ -11,6 +11,11 @@
               <span class="report-tag">Prediction Report</span>
               <span class="report-id">ID: {{ reportId || 'REF-2024-X92' }}</span>
             </div>
+
+            <!-- تحميل التقرير بكل الصيغ: PDF · Word · HTML · Markdown · نص -->
+            <div v-if="reportId" class="report-download-row">
+              <ReportDownloadButton :report-id="reportId" :file-name="reportOutline?.title || ''" />
+            </div>
             <h1 class="main-title">{{ reportOutline.title }}</h1>
             <p class="sub-title">{{ reportOutline.summary }}</p>
             <div class="header-divider"></div>
@@ -413,6 +418,7 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick, h, reactive } f
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getAgentLog, getConsoleLog, getReportProgress, getReport, getReportSections } from '../api/report'
+import ReportDownloadButton from './ReportDownloadButton.vue'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -5327,6 +5333,12 @@ watch(() => props.reportId, (newId) => {
 .log-msg.error { color: #EF5350; }
 .log-msg.warning { color: #FFA726; }
 .log-msg.success { color: #66BB6A; }
+
+.report-download-row {
+  margin: 4px 0 14px;
+  display: flex;
+  justify-content: flex-start;
+}
 </style>
 
 <style>

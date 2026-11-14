@@ -7,7 +7,7 @@ import os
 import traceback
 import threading
 from functools import partial
-from flask import request, jsonify, send_file
+from flask import request, jsonify, send_file, Response
 
 from . import report_bp
 from ..config import Config
@@ -544,47 +544,79 @@ def list_reports():
 
 @report_bp.route('/<report_id>/download', methods=['GET'])
 def download_report(report_id: str):
+    """تحميل التقرير بإحدى الصيغ: md (افتراضي) · txt · html · docx · pdf.
+
+    مثال: /api/report/report_xxx/download?format=pdf
     """
-    下载报告（Markdown格式）
-    
-    返回Markdown文件
-    """
+    from urllib.parse import quote
+
+    from ..services.report_export import (
+        ExportError,
+        SUPPORTED_FORMATS,
+        build_export,
+    )
+
+    fmt = (request.args.get('format') or 'md').strip().lower()
+    if fmt in ('markdown', 'mdown'):
+        fmt = 'md'
+    if fmt in ('word', 'doc'):
+        fmt = 'docx'
+    if fmt not in SUPPORTED_FORMATS:
+        return jsonify({
+            "success": False,
+            "error": "صيغة غير مدعومة. المتاح: " + ", ".join(SUPPORTED_FORMATS),
+        }), 400
+
     try:
         report = ReportManager.get_report(report_id)
-        
         if not report:
             return jsonify({
                 "success": False,
                 "error": t('api.reportNotFound', id=report_id)
             }), 404
-        
-        md_path = ReportManager._get_report_markdown_path(report_id)
 
-        if not storage.exists(md_path):
-            # 如果MD文件不存在，生成一个临时文件
-            import tempfile
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.md', delete=False) as f:
-                f.write(report.markdown_content)
-                temp_path = f.name
-            
-            return send_file(
-                temp_path,
-                as_attachment=True,
-                download_name=f"{report_id}.md"
-            )
-        
-        return send_file(
-            storage.ensure_local(md_path),
-            as_attachment=True,
-            download_name=f"{report_id}.md"
+        markdown_text = getattr(report, 'markdown_content', '') or ''
+        try:
+            md_path = ReportManager._get_report_markdown_path(report_id)
+            if storage.exists(md_path):
+                stored = storage.read_text(md_path)
+                if stored:
+                    markdown_text = stored
+        except Exception:  # noqa: BLE001 - نكتفي بنص التقرير المحفوظ
+            pass
+
+        if not markdown_text.strip():
+            return jsonify({
+                "success": False,
+                "error": "لا يوجد نص لهذا التقرير بعد",
+            }), 409
+
+        title = "تقرير استشراف"
+        try:
+            outline = report.outline if isinstance(report.outline, dict) else {}
+            title = (outline.get('title') or title).strip() or title
+        except Exception:  # noqa: BLE001
+            pass
+
+        data, mime, ext = build_export(markdown_text, fmt, title=title)
+
+        ascii_name = f"istishraf-{report_id}{ext}"
+        utf8_name = quote(f"تقرير-{report_id}{ext}")
+        response = Response(data, mimetype=mime)
+        response.headers['Content-Disposition'] = (
+            f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
         )
-        
-    except Exception as e:
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
+    except ExportError as exc:
+        logger.warning("تعذر تصدير التقرير %s بصيغة %s: %s", report_id, fmt, exc)
+        return jsonify({"success": False, "error": str(exc)}), 500
+    except Exception as e:  # noqa: BLE001
         logger.error(f"下载报告失败: {str(e)}")
         return jsonify({
             "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
+            "error": "تعذر تجهيز الملف، حاول مرة أخرى",
         }), 500
 
 
