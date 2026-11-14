@@ -261,16 +261,20 @@ def targets(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
     return out
 
 
+_AR_DIGITS = str.maketrans('0123456789', '٠١٢٣٤٥٦٧٨٩')
+
+
 def _num_ar(value) -> str:
-    """صياغة رقم عربية بسيطة (٤٥٬٠٠٠ / ١٫١)."""
+    """صياغة رقم عربية (٤٥٬٠٠٠ / ١٫١) حتى لا يختلط اللاتيني بالعربي في التقرير."""
     try:
         number = float(value)
     except (TypeError, ValueError):
         return str(value)
     if number == int(number):
-        return f"{int(number):,}".replace(',', '٬')
-    text = f"{number:.1f}"
-    return text.replace('.', '٫')
+        text = f"{int(number):,}".replace(',', '٬')
+    else:
+        text = f"{number:.1f}".replace('.', '٫')
+    return text.translate(_AR_DIGITS)
 
 
 def _fmt(number: int) -> str:
