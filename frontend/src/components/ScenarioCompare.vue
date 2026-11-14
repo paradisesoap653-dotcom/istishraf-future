@@ -78,14 +78,14 @@
             </div>
 
             <div class="scn-actions">
-              <a
+              <button
                 v-for="f in formats"
                 :key="f.id"
                 class="scn-dl"
-                :href="downloadUrl(f.id)"
-                target="_blank"
-                rel="noopener"
-              >{{ f.label }}</a>
+                type="button"
+                :disabled="downloading"
+                @click="downloadFile(f.id)"
+              >{{ downloading === f.id ? '…' : f.label }}</button>
             </div>
 
             <div class="scn-actions">
@@ -101,6 +101,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
+import service from '../api'
 import { runReportScenario, getScenarioDownloadUrl } from '../api/report'
 
 const props = defineProps({
@@ -150,6 +151,36 @@ const rows = computed(() => {
 
 const downloadUrl = (format) =>
   getScenarioDownloadUrl(props.reportId, result.value?.scenario_id, format)
+
+const downloading = ref('')
+
+// التحميل يمرّ عبر axios حتى يُرسل رمز الدخول؛ الرابط المباشر يُرفض بـ401.
+const downloadFile = async (format) => {
+  if (!result.value || downloading.value) return
+  downloading.value = format
+  try {
+    const data = await service.get(downloadUrl(format), { responseType: 'blob' })
+    const blob = data instanceof Blob ? data : new Blob([data])
+    if (blob.type && blob.type.includes('json')) {
+      const text = await blob.text()
+      let msg = 'تعذر تجهيز الملف'
+      try { msg = JSON.parse(text).error || msg } catch (e) { /* نص غير متوقع */ }
+      throw new Error(msg)
+    }
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `سيناريو-مقارن-${result.value.scenario_id}.${format}`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    setTimeout(() => URL.revokeObjectURL(url), 4000)
+  } catch (err) {
+    error.value = err?.message || 'تعذر تنزيل المقارنة'
+  } finally {
+    downloading.value = ''
+  }
+}
 
 const run = async () => {
   if (busy.value || !change.value.trim()) return
@@ -295,7 +326,8 @@ const close = () => {
 
 .scn-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .scn-dl {
-  flex: 1 1 30%; text-align: center; text-decoration: none;
+  flex: 1 1 30%; text-align: center; text-decoration: none; cursor: pointer;
+  font-family: inherit;
   padding: 9px 10px; border-radius: 10px;
   border: 1px solid var(--border-frame, #CBD5E1);
   color: var(--text-primary, #0F172A); font-size: 12.5px; font-weight: 700;
