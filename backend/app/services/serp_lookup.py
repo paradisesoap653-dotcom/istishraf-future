@@ -37,10 +37,10 @@ def is_configured() -> bool:
     return bool(key())
 
 
-def _get(params: Dict[str, Any]) -> Dict[str, Any]:
+def _get(params: Dict[str, Any], timeout: float = _TIMEOUT) -> Dict[str, Any]:
     params = {k: v for k, v in params.items() if v not in (None, '')}
     params['api_key'] = key()
-    resp = httpx.get(_API, params=params, timeout=_TIMEOUT)
+    resp = httpx.get(_API, params=params, timeout=timeout)
     try:
         data = resp.json()
     except Exception:  # noqa: BLE001
@@ -75,6 +75,11 @@ def facebook_profile(reference: str) -> Dict[str, Any]:
     ref = (reference or '').strip()
     if not ref:
         raise ValueError('أدخل رابط صفحة فيسبوك أولًا')
+    if '/share/' in ref:
+        raise ValueError(
+            'رابط «مشاركة» من فيسبوك لا يُقرأ آليًا. افتح الرابط في فيسبوك، '
+            'ثم انسخ العنوان الظاهر في الأعلى (مثل facebook.com/اسم_الصفحة) والصقه هنا'
+        )
     ref = re.sub(r'^https?://', '', ref)
     ref = re.sub(r'^(www\.|m\.|web\.)', '', ref)
     ref = re.sub(r'^facebook\.com/', '', ref)
@@ -98,7 +103,8 @@ def facebook_profile(reference: str) -> Dict[str, Any]:
     }
 
 
-def trend_summary(keyword: str, geo: str = 'SD', months: int = 3) -> Dict[str, Any]:
+def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
+                  timeout: float = _TIMEOUT) -> Dict[str, Any]:
     """ملخّص اهتمام البحث من Google Trends (متوسط، قمة، اتجاه)."""
     word = (keyword or '').strip()
     if not word:
@@ -111,7 +117,7 @@ def trend_summary(keyword: str, geo: str = 'SD', months: int = 3) -> Dict[str, A
         'geo': geo,
         'data_type': 'TIMESERIES',
         'date': f'today {months}-m',
-    })
+    }, timeout=timeout)
     timeline: List[Dict[str, Any]] = ((data.get('interest_over_time') or {}).get('timeline_data') or [])
     values: List[int] = []
     for point in timeline:

@@ -254,7 +254,16 @@ def create_simulation():
         owner_uid = current_user['id'] if current_user else UserStore.get_owner_id('project', project_id)
         if owner_uid:
             UserStore.assign_owner('simulation', state.simulation_id, owner_uid)
-        
+
+        # قياس اهتمام البحث تلقائيًا باسم المشروع (يُحفظ كمعطى، ولا يُفشل الإنشاء)
+        try:
+            from ..services import interest_auto
+            keyword = interest_auto.keyword_for(project)
+            if keyword:
+                interest_auto.ensure_interest(state.simulation_id, keyword)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"تعذّر قياس اهتمام البحث تلقائيًا: {exc}")
+
         return jsonify({
             "success": True,
             "data": state.to_dict()
