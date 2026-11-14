@@ -186,3 +186,12 @@ export const interviewAgents = (data) => {
 export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
+
+/**
+ * أرقام المستخدم الحقيقية لكل منصّة (متابعون، أعضاء مجموعات، مشاهدات).
+ */
+export const getPlatformInputs = (simulationId) =>
+  service.get(`/api/simulation/${simulationId}/platform-inputs`)
+
+export const savePlatformInputs = (simulationId, inputs) =>
+  service.post(`/api/simulation/${simulationId}/platform-inputs`, { inputs })

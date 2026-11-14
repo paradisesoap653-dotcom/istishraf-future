@@ -20,6 +20,7 @@ from ..config import Config
 from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from . import platform_inputs
 from . import platforms as platform_registry
 
 logger = get_logger('mirofish.scenario')
@@ -226,6 +227,7 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
   لا تخترع منصّة أخرى، واحترم طبيعة كل منصّة في شكل المحتوى:
 {platform_rules}
 - لا تجعل كل الأفعال على منصّة واحدة: استخدم منصّتين على الأقل في كل جولة.
+{inputs_block}
 - امزج بين "CREATE_POST" و"CREATE_COMMENT" في كل جولة (لا تجعلها منشورات فقط).
 - استخدم agent_id من قائمة الوكلاء أعلاه فقط.
 
@@ -286,6 +288,9 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
         change=change,
         platform_list='، '.join(f'"{p}" ({platform_registry.label(p)})' for p in allowed),
         platform_rules=platform_registry.prompt_block(allowed),
+        inputs_block=platform_inputs.prompt_block(
+            platform_inputs.load(simulation_id), allowed, rounds * 6
+        ) or '',
     )
 
     llm = LLMClient()
@@ -339,6 +344,13 @@ def _markdown(payload: Dict[str, Any]) -> str:
         '',
         f"التقرير الأصلي: {payload.get('report_id', '')} · جولات السيناريو: {payload.get('rounds', '')}",
         f"المنصّات (نفس منصّات المحاكاة الأصلية): {platform_registry.labels(payload.get('platforms') or [])}",
+    ]
+    inputs_line = platform_inputs.summary_line(
+        payload.get('platform_inputs') or {}, payload.get('platforms') or []
+    )
+    if inputs_line:
+        lines.append(f"أرقام مقدَّمة من صاحب المشروع (مدخل): {inputs_line}")
+    lines += [
         '',
         '## المؤشرات (محسوبة من وقائع المحاكاة)',
         '',
@@ -424,6 +436,7 @@ def run_and_compare(report_id: str, simulation_id: str, change: str,
         'change': change,
         'rounds': rounds,
         'platforms': allowed,
+        'platform_inputs': platform_inputs.load(simulation_id),
         'status': 'completed',
         'baseline': baseline,
         'scenario': scenario_metrics,

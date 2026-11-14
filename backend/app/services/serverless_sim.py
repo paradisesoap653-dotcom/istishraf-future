@@ -13,6 +13,7 @@ from typing import Dict, Any, List
 from ..config import Config
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
+from . import platform_inputs
 from . import platforms as platform_registry
 
 logger = get_logger("mirofish.serverless_sim")
@@ -298,9 +299,17 @@ def run_serverless_simulation(
         }
         for idx, p in enumerate(profiles[:16])
     ]
+    # أرقام المستخدم الحقيقية (إن أدخلها) توزّع الأفعال بحسب حجم جمهوره فعلاً
+    user_inputs = platform_inputs.load(os.path.basename(os.path.abspath(sim_dir)))
+    inputs_block = platform_inputs.prompt_block(user_inputs, platforms, rounds * 6)
+
     requirement = sim_config.get("simulation_requirement", "")
     narrative = sim_config.get("event_config", {}).get("narrative_direction", "")
     initial_posts = sim_config.get("event_config", {}).get("initial_posts", [])
+
+    platform_header = f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
+    if inputs_block:
+        platform_header += f"{inputs_block}\n\n"
 
     llm = LLMClient()
     prompt = (
@@ -309,7 +318,7 @@ def run_serverless_simulation(
         f"السياق السردي: {narrative}\n"
         f"المنشورات الافتتاحية: {json.dumps(initial_posts, ensure_ascii=False)}\n"
         f"قائمة الوكلاء المتاحين: {json.dumps(agent_summary, ensure_ascii=False)}\n\n"
-        f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
+        f"{platform_header}"
         f"قم بمحاكاة {rounds} جولات زمنية متتالية من النقاش الواقعي والمتنوع (تأييد، تحفظ، أرقام، مقترحات عملية) "
         "بين هؤلاء الوكلاء باللغة المناسبة للسياق (العربية افتراضياً). في كل جولة أدرج 4 إلى 8 تفاعلات متنوعة بين "
         "CREATE_POST و CREATE_COMMENT.\n"

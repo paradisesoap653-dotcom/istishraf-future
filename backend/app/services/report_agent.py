@@ -1951,7 +1951,19 @@ class ReportAgent:
         except Exception:  # noqa: BLE001
             pass
 
+        from . import platform_inputs as platform_inputs_mod
         from . import platforms as platform_registry
+
+        try:
+            user_inputs = platform_inputs_mod.load(self.simulation_id)
+            inputs_line = platform_inputs_mod.summary_line(user_inputs, platform_registry.ORDER)
+            if inputs_line:
+                parts.append(
+                    "أرقام قدّمها صاحب المشروع بنفسه (تُعامل كمدخل، وتُذكر كمدخل في "
+                    "قسم الافتراضات):\n" + inputs_line
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر قراءة أرقام المنصّات للتقرير: %s", exc)
 
         for platform in platform_registry.ORDER:
             try:

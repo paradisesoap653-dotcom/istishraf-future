@@ -2192,6 +2192,53 @@ def get_agent_stats(simulation_id: str):
 
 # ============== 数据库查询接口 ==============
 
+@simulation_bp.route('/<simulation_id>/platform-inputs', methods=['GET'])
+def get_platform_inputs(simulation_id: str):
+    """أرقام المستخدم الحقيقية لكل منصّة (تُعامل كمعطى في المحاكاة والتقرير)."""
+    from ..services import platform_inputs as pi
+    from ..services import platforms as pr
+
+    try:
+        platforms = pr.ORDER
+        inputs = pi.load(simulation_id)
+        return jsonify({
+            "success": True,
+            "data": {
+                "platforms": platforms,
+                "fields": pi.fields_for(platforms),
+                "inputs": inputs,
+                "weights": pi.weights(inputs, pr.DEFAULT_SET),
+                "summary": pi.summary_line(inputs, platforms),
+            },
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر قراءة أرقام المنصّات: {exc}")
+        return jsonify({"success": False, "error": "تعذر قراءة الأرقام المحفوظة"}), 500
+
+
+@simulation_bp.route('/<simulation_id>/platform-inputs', methods=['POST'])
+def save_platform_inputs(simulation_id: str):
+    """يحفظ أرقام المستخدم (متابعون، أعضاء مجموعات، مشاهدات) لتوزيع الأفعال بها."""
+    from ..services import platform_inputs as pi
+    from ..services import platforms as pr
+
+    try:
+        payload = request.get_json(silent=True) or {}
+        inputs = pi.save(simulation_id, payload.get("inputs") or {}, pr.ORDER)
+        return jsonify({
+            "success": True,
+            "data": {
+                "inputs": inputs,
+                "weights": pi.weights(inputs, pr.DEFAULT_SET),
+                "summary": pi.summary_line(inputs, pr.ORDER),
+                "saved": bool(inputs),
+            },
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر حفظ أرقام المنصّات: {exc}")
+        return jsonify({"success": False, "error": "تعذر حفظ الأرقام، حاول مرة أخرى"}), 500
+
+
 @simulation_bp.route('/<simulation_id>/posts', methods=['GET'])
 def get_simulation_posts(simulation_id: str):
     """
