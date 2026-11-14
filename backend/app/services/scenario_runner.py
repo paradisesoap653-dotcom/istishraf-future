@@ -292,21 +292,20 @@ def _markdown(payload: Dict[str, Any]) -> str:
     lines = [
         f"# سيناريو مقارن — {payload.get('change', '')}",
         '',
-        f"التقرير الأصلي: `{payload.get('report_id', '')}` · "
-        f"جولات السيناريو: {payload.get('rounds', '')}",
+        f"التقرير الأصلي: {payload.get('report_id', '')} · جولات السيناريو: {payload.get('rounds', '')}",
         '',
         '## المؤشرات (محسوبة من وقائع المحاكاة)',
         '',
-        '| المؤشر | الوضع الأصلي | السيناريو | الفرق |',
-        '|---|---|---|---|',
     ]
+    # سطور بدل جدول الأنابيب: العربية في الجداول النصية تُقرأ مقلوبة في بعض
+    # القارئات، والسطر الواحد واضح في Markdown وWord وPDF على السواء.
     for label, a, b in rows:
         try:
             diff = round(float(b) - float(a), 1)
-            diff_txt = f"{'+' if diff > 0 else ''}{diff}"
+            diff_txt = f"+{diff}" if diff > 0 else f"{diff}"
         except (TypeError, ValueError):
             diff_txt = '—'
-        lines.append(f'| {label} | {a} | {b} | {diff_txt} |')
+        lines.append(f"- **{label}**: الأصل {a} — السيناريو {b} (الفرق {diff_txt})")
 
     lines += [
         '',
