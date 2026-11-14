@@ -24,16 +24,29 @@ CACHE_TTL_SECONDS = 7 * 24 * 3600
 FETCH_TIMEOUT = 12.0
 
 
+_SEPARATORS = ('—', '–', '|', '·', ':', ' - ', '\n', '/')
+
+
 def keyword_for(project: Any) -> str:
-    """أفضل كلمة للقياس: اسم المشروع، وإلا أول كلمات وصف المطلوب."""
-    name = (getattr(project, 'name', '') or '').strip()
-    if name:
-        return name[:60]
-    text = (getattr(project, 'simulation_requirement', '') or '').strip()
-    if not text:
-        return ''
-    words = text.replace('\n', ' ').split()
-    return ' '.join(words[:4])[:60]
+    """أفضل كلمة للقياس: اسم المشروع مقصوصًا عند الشُرَط، وإلا أول كلمات المطلوب.
+
+    سبب القصّ: أسماء المشاريع تُكتب غالبًا «ركشتك — جولة كاملة»، وقياس الاهتمام
+    يحتاج الاسم وحده («ركشتك») وإلا رجع صفرًا لأن لا أحد يبحث عن العنوان كاملًا.
+    """
+    raw = (getattr(project, 'name', '') or '').strip()
+    if not raw:
+        text = (getattr(project, 'simulation_requirement', '') or '').strip()
+        if not text:
+            return ''
+        raw = ' '.join(text.split()[:4])
+    for sep in _SEPARATORS:
+        if sep in raw:
+            raw = raw.split(sep)[0]
+    raw = ' '.join(raw.split()).strip(' .،,-«»"\'')
+    words = raw.split()
+    if len(words) > 4:
+        raw = ' '.join(words[:4])
+    return raw[:60]
 
 
 def _cache_path() -> str:
