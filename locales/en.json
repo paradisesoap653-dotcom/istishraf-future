@@ -57,7 +57,7 @@
     "step02Title": "Env Setup",
     "step02Desc": "Entity extraction & persona generation & Agent config injection",
     "step03Title": "Simulation",
-    "step03Desc": "Dual-platform parallel sim & auto-parse requirements & temporal memory",
+    "step03Desc": "Parallel simulation across four platforms (Facebook, WhatsApp, TikTok, Twitter) with live temporal memory",
     "step04Title": "Report",
     "step04Desc": "ReportAgent interacts with the post-simulation environment via rich tools",
     "step05Title": "Interaction",

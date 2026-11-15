@@ -1258,6 +1258,7 @@ def get_simulation_config_realtime(simulation_id: str):
         error = None
         profiles_generated = False
         config_generated = False
+        research_summary = ""
         
         state_file = _restore(os.path.join(sim_dir, "state.json"))
         if os.path.exists(state_file):
@@ -1268,6 +1269,7 @@ def get_simulation_config_realtime(simulation_id: str):
                     error = state_data.get("error")
                     is_generating = status == "preparing"
                     profiles_generated = state_data.get("profiles_generated", False)
+                    research_summary = state_data.get("research_summary") or ""
                     config_generated = state_data.get("config_generated", False)
                     
                     # 判断当前阶段
@@ -1310,7 +1312,7 @@ def get_simulation_config_realtime(simulation_id: str):
                     p for p in ("twitter", "reddit")
                     if f"{p}_config" in config
                 ],
-                "research_summary": state.research_summary if state else "",
+                "research_summary": research_summary,
                 "generated_at": config.get("generated_at"),
                 "llm_model": config.get("llm_model")
             }

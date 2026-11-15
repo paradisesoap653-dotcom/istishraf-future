@@ -122,7 +122,7 @@
                     @click="toggleSelfLoop(loop.uuid || idx)"
                   >
                     <span class="self-loop-index">#{{ idx + 1 }}</span>
-                    <span class="self-loop-name">{{ loop.name || loop.fact_type || 'RELATED' }}</span>
+                    <span class="self-loop-name">{{ relationTypeLabel(loop.name || loop.fact_type || 'RELATED') }}</span>
                     <span class="self-loop-toggle">{{ expandedSelfLoops.has(loop.uuid || idx) ? '−' : '+' }}</span>
                   </div>
                   
@@ -157,7 +157,7 @@
             <!-- 普通边详情 -->
             <template v-else>
               <div class="edge-relation-header">
-                {{ selectedItem.data.source_name }} → {{ selectedItem.data.name || 'RELATED_TO' }} → {{ selectedItem.data.target_name }}
+                {{ selectedItem.data.source_name }} → {{ relationTypeLabel(selectedItem.data.name || 'RELATED_TO') }} → {{ selectedItem.data.target_name }}
               </div>
               
               <div class="detail-row">
@@ -166,7 +166,7 @@
               </div>
               <div class="detail-row">
                 <span class="detail-label">Label:</span>
-                <span class="detail-value">{{ selectedItem.data.name || 'RELATED_TO' }}</span>
+                <span class="detail-value">{{ relationTypeLabel(selectedItem.data.name || 'RELATED_TO') }}</span>
               </div>
               <div class="detail-row">
                 <span class="detail-label">Type:</span>
@@ -219,7 +219,7 @@
       <div class="legend-items">
         <div class="legend-item" v-for="type in entityTypes" :key="type.name">
           <span class="legend-dot" :style="{ background: type.color }"></span>
-          <span class="legend-label">{{ type.name }}</span>
+          <span class="legend-label">{{ entityTypeLabel(type.name) }}</span>
         </div>
       </div>
     </div>
@@ -236,7 +236,7 @@
 </template>
 
 <script setup>
-import { entityTypeLabel } from '../utils/ontologyLabels'
+import { entityTypeLabel, relationTypeLabel } from '../utils/ontologyLabels'
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import * as d3 from 'd3'
 
@@ -620,7 +620,10 @@ const renderGraph = () => {
   const linkLabels = linkGroup.selectAll('text')
     .data(edges)
     .enter().append('text')
-    .text(d => d.name)
+    .text(d => {
+      const label = relationTypeLabel(d.name)
+      return label.length > 16 ? label.slice(0, 16) + '…' : label
+    })
     .attr('font-size', '9px')
     .attr('fill', '#666')
     .attr('text-anchor', 'middle')

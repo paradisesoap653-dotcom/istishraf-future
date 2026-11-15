@@ -218,7 +218,10 @@ html[data-theme="dark"] .auth-trigger-btn.dark {
     justify-content: space-between;
     padding: 10px 12px !important;
     gap: 10px;
-    position: relative !important;
+    /* ثابت لا ملتصق: الرأس كان يغطي آخر صفّ داخله (أزرار العرض) عند التمرير */
+    position: static !important;
+    z-index: auto !important;
+    overflow: visible !important;
   }
 
   .header-left {

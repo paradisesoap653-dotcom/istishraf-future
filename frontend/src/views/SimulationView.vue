@@ -71,7 +71,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { registerOntology } from '../utils/ontologyLabels'
 import { useRoute, useRouter } from 'vue-router'
 import GraphPanel from '../components/GraphPanel.vue'
 import Step2EnvSetup from '../components/Step2EnvSetup.vue'
@@ -117,6 +118,11 @@ const rightPanelStyle = computed(() => {
   if (viewMode.value === 'graph') return { width: '0%', opacity: 0, transform: 'translateX(20px)' }
   return { width: '50%', opacity: 1, transform: 'translateX(0)' }
 })
+
+// نتعلّم الأسماء العربية من مخطط المشروع فيُعرض المخطط والعلاقات بالعربية
+watch(() => projectData.value?.ontology, (value) => {
+  registerOntology(value)
+}, { immediate: true })
 
 // --- Status Computed ---
 const statusClass = computed(() => {
