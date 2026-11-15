@@ -161,7 +161,7 @@ def _root() -> str:
 
 def _key(path: str) -> str:
     """مفتاح نسبي ثابت داخل مجلد الرفع."""
-    absolute = os.path.abspath(path)
+    absolute = _local(path)
     try:
         relative = os.path.relpath(absolute, _root())
     except ValueError:  # pragma: no cover - أحجام أقراص مختلفة
@@ -170,6 +170,16 @@ def _key(path: str) -> str:
 
 
 def _local(path: str) -> str:
+    """مسار محلي مطلق.
+
+    قاعدة موحّدة: المسارات النسبية تُحسب من مجلد الرفع لا من مجلد التشغيل.
+    سبب ذلك: بعض الوحدات تقرأ ``simulations/<id>/...`` و``graphs/<id>.json``
+    بمسارات نسبية. كان ``abspath`` يحلها مقابل مجلد التشغيل (مثل /var/task أو
+    backend/) فتصير مفاتيح التخزين الدائم مختلفة عن مفاتيح الكتابة، فيرى
+    التقرير أنه لا توجد وقائع ولا تفاعلات ويخرج عامًا.
+    """
+    if not os.path.isabs(path):
+        path = os.path.join(_root(), path)
     return os.path.abspath(path)
 
 
