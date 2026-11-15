@@ -505,6 +505,7 @@ def run_serverless_simulation(
 
     rounds_data: List[Dict[str, Any]] = []
     next_round = 1
+    consecutive_failures = 0
     # حجم الدفعة: عند سقف ١٤ فعلًا أو أكثر لكل جولة، نجعلها جولة واحدة لكل
     # طلب حتى لا يُبتر JSON (حدث فعليًا: «truncated at the token limit»).
     batch_size = 1 if per_round_target >= 14 else 2
@@ -551,11 +552,19 @@ def run_serverless_simulation(
                 logger.warning(f"تعذر توليد الجولة {next_round} منفردة: {exc}")
 
         if not valid:
+            # كان أول إخفاق واحد يوقف المحاكاة كلها (خرجت ٦ جولات بدل ١٢).
+            # الآن نتجاوز الجولة ونكمل، ولا نتوقف إلا بعد ٣ إخفاقات متتالية.
+            consecutive_failures += 1
             logger.warning(
-                "لم يصل أي فعل صالح للجولة %s — يُحتفظ بما تولّد حتى الآن (%s جولة)",
-                next_round, len(rounds_data),
+                "لم يصل فعل صالح للجولة %s — نتجاوزها ونكمل (إخفاقات متتالية: %s)",
+                next_round, consecutive_failures,
             )
-            break
+            if consecutive_failures >= 3:
+                logger.warning("٣ إخفاقات متتالية — يُحتفظ بما تولّد (%s جولة)", len(rounds_data))
+                break
+            next_round += chunk
+            continue
+        consecutive_failures = 0
         for offset, item in enumerate(valid):
             item["round"] = next_round + offset
             for act in item["actions"]:
