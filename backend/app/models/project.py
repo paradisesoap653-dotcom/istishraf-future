@@ -194,7 +194,7 @@ class ProjectManager:
         """
         meta_path = cls._get_project_meta_path(project_id)
 
-        data = storage.read_json(meta_path)
+        data = storage.read_json_fresh(meta_path)
         if data is None:
             return None
 

@@ -334,6 +334,49 @@ def read_json(path: str) -> Optional[Any]:
         return None
 
 
+def read_bytes_fresh(path: str) -> bytes:
+    """اقرأ النسخة الأحدث من التخزين الدائم، لا النسخة المحلية القديمة.
+
+    سبب وجودها: عدة عمليات تكتب الملف نفسه (تطبيق Vercel + عمّال GitHub
+    Actions). القراءة العادية تُفضّل الملف المحلي إن وُجد، فترى نسخة قديمة
+    كُتبت في هذه النسخة من الخادم بينما ملف آخر أحدث في قاعدة البيانات —
+    ولهذا كان التقرير يبقى «قيد التوليد» في الواجهة بعد أن يكتمل فعلًا.
+    """
+    content = None
+    try:
+        content = _pg_get(_key(path))
+    except Exception as exc:  # pragma: no cover - تعطل قاعدة البيانات
+        logger.warning(f"تعذر القراءة من التخزين الدائم ({path}): {exc}")
+    if content is None:
+        return read_bytes(path)
+    absolute = _local(path)
+    try:
+        os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+        with open(absolute, "wb") as handle:
+            handle.write(content)
+    except OSError:  # pragma: no cover
+        pass
+    return content
+
+
+def read_text_fresh(path: str) -> Optional[str]:
+    try:
+        return read_bytes_fresh(path).decode("utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def read_json_fresh(path: str) -> Optional[Any]:
+    raw = read_text_fresh(path)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error(f"ملف JSON تالف: {path}")
+        return None
+
+
 def save_stream(path: str, file_storage) -> int:
     """احفظ FileStorage (رفع Flask) ثم انسخه إلى Postgres. يعيد الحجم."""
     absolute = _local(path)

@@ -196,7 +196,7 @@ class SimulationManager:
         sim_dir = self._get_simulation_dir(simulation_id)
         state_file = os.path.join(sim_dir, "state.json")
 
-        data = storage.read_json(state_file)
+        data = storage.read_json_fresh(state_file)
         if data is None:
             return None
         

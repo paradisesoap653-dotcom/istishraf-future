@@ -121,11 +121,21 @@ class TaskManager:
     def get_task(self, task_id: str) -> Optional[Task]:
         """获取任务"""
         with self._task_lock:
+            fpath = self._task_file(task_id)
+            # اقرأ النسخة الأحدث من التخزين الدائم: العامل في GitHub Actions
+            # هو من يحدّث حالة المهمة، وذاكرة هذه النسخة قد تحمل حالة قديمة.
+            d = storage.read_json_fresh(fpath) if storage.exists(fpath) else None
             task = self._tasks.get(task_id)
             if task:
-                return task
-            fpath = self._task_file(task_id)
-            d = storage.read_json(fpath) if storage.exists(fpath) else None
+                cached_at = getattr(task, "updated_at", None)
+                db_at = None
+                if d and d.get("updated_at"):
+                    try:
+                        db_at = datetime.fromisoformat(d["updated_at"])
+                    except Exception:
+                        db_at = None
+                if db_at is None or (cached_at and db_at <= cached_at):
+                    return task
             if d:
                 try:
                     restored = Task(

@@ -1920,7 +1920,7 @@ class ReportAgent:
         parts: List[str] = []
 
         try:
-            graph = storage.read_json(f"graphs/{self.graph_id}.json") or {}
+            graph = storage.read_json_fresh(f"graphs/{self.graph_id}.json") or {}
             nodes = graph.get("nodes") or []
             edges = graph.get("edges") or []
             node_lines = []
@@ -1941,7 +1941,7 @@ class ReportAgent:
             logger.warning("تعذر قراءة الشبكة لبناء السياق: %s", exc)
 
         try:
-            state = storage.read_json(f"simulations/{self.simulation_id}/state.json") or {}
+            state = storage.read_json_fresh(f"simulations/{self.simulation_id}/state.json") or {}
             summary_bits = []
             for key in ("status", "entities_count", "profiles_count", "current_round", "total_rounds"):
                 if state.get(key) not in (None, "", []):
@@ -2580,7 +2580,7 @@ class ReportManager:
     @classmethod
     def get_progress(cls, report_id: str) -> Optional[Dict[str, Any]]:
         """获取报告生成进度"""
-        return storage.read_json(cls._get_progress_path(report_id))
+        return storage.read_json_fresh(cls._get_progress_path(report_id))
     
     @classmethod
     def get_generated_sections(cls, report_id: str) -> List[Dict[str, Any]]:
@@ -2815,7 +2815,9 @@ class ReportManager:
             else:
                 return None
 
-        data = storage.read_json(path)
+        # التخزين الدائم هو المصدر الحقيقي: العمّال يحدّثون التقرير من عملية
+        # أخرى، والنسخة المحلية على هذه النسخة من الخادم قد تكون قديمة.
+        data = storage.read_json_fresh(path)
         if data is None:
             return None
         
