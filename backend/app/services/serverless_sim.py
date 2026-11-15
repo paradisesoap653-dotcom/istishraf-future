@@ -259,6 +259,24 @@ def _clamp_platforms(rounds_data: List[Dict[str, Any]],
             second = next(p for p in platforms if p not in seen)
             for act in actions[1::2]:
                 act["platform"] = second
+
+        # ضمان حضور: كل منصّة متاحة يجب أن تظهر في الجولة ما دام فيها أفعال
+        # كافية — كان النموذج يُهمل ريديت تمامًا في بعض الجولات.
+        counts: Dict[str, int] = {}
+        for act in actions:
+            counts[act["platform"]] = counts.get(act["platform"], 0) + 1
+        for missing in [p for p in platforms if p not in counts]:
+            if len(actions) < len(platforms):
+                break
+            donor = max(counts, key=lambda k: counts[k])
+            if counts[donor] <= 1:
+                break
+            for act in actions:
+                if act.get("platform") == donor and act.get("action_type") != "CREATE_POST":
+                    act["platform"] = missing
+                    counts[donor] -= 1
+                    counts[missing] = 1
+                    break
         used_all |= {a.get("platform") for a in actions}
     return rounds_data
 
@@ -445,6 +463,24 @@ def run_serverless_simulation(
         + '", "action_type": "CREATE_POST", "content": "...", "likes": 18, "shares": 5}]}]}'
     )
 
+    # توزيع الأفعال على المنصّات في كل جولة بحسب أوزان السجل. كان التوزيع
+    # يُحقن فقط عند إدخال المستخدم أرقامًا، فكانت ريديت تخرج بنصيب هزيل (١٣٪).
+    try:
+        from . import platform_inputs as _pi
+
+        _w = _pi.weights({}, platforms)
+        _sum = sum(_w.values()) or 1.0
+        round_mix = {
+            p: max(1, int(round(per_round_target * (_w.get(p, 0) / _sum))))
+            for p in platforms
+        }
+        mix_line = '، '.join(
+            f"{platform_registry.label(p)} {round_mix[p]}" for p in platforms
+        )
+    except Exception:  # noqa: BLE001
+        round_mix = {}
+        mix_line = ""
+
     def _batch_prompt(start_round: int, count: int, digest: str) -> str:
         span = (
             f"الدفعة الحالية: الجولة {start_round} فقط."
@@ -454,6 +490,11 @@ def run_serverless_simulation(
         return (
             f"{prompt}\n\n{span}\n"
             + (f"{digest}\n\n" if digest else "")
+            + (
+                f"وزّع أفعال كل جولة على المنصّات بهذا التقريب: {mix_line} "
+                "(ريديت منصّة كاملة لها نصيبها، لا ذكر عابر).\n"
+                if mix_line else ""
+            )
             + f"في كل جولة أدرج {per_round_min} إلى {per_round_target} تفاعلًا مختلفًا بين الوكلاء "
             "(CREATE_POST منشور جديد، CREATE_COMMENT تعليق على منشور سبق في نفس المنصّة).\n"
             "أعطِ لكل تفاعل أرقام تفاعل واقعية (likes و shares) تناسب المنصّة والموضوع.\n"
