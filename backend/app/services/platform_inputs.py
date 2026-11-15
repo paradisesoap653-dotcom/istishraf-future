@@ -278,10 +278,12 @@ def _num_ar(value) -> str:
 
 
 def _fmt(number: int) -> str:
-    return f"{number:,}".replace(',', '٬')
+    """أرقام عربية موحّدة مع بقية التقرير (كانت لاتينية فتختلط بالعربية)."""
+    return f"{number:,}".replace(',', '٬').translate(_AR_DIGITS)
 
 
-def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str]) -> str:
+def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
+                 multiline: bool = False) -> str:
     """سطر عربي يذكر الأرقام كما أدخلها المستخدم (يُكتب في التقرير)."""
     parts: List[str] = []
     for plat in platforms:
@@ -309,6 +311,10 @@ def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str]) ->
             f"متوسط {_num_ar(interest['average'])} من ١٠٠، أعلى قمة {_num_ar(interest['peak'])}، "
             f"المستوى {interest['level'] or 'غير محدد'}، الاتجاه {interest['direction'] or 'مستقر'}"
         )
+    if multiline:
+        # كل رقم في سطر مستقل: في ملف PDF العربي يتشابك ترتيب الأجزاء إذا جاءت
+        # في سطر واحد مع رقم تواصل وأرقام لاتينية.
+        return "\n".join(f"• {part}" for part in parts)
     return ' · '.join(parts)
 
 
