@@ -78,30 +78,41 @@ def _read_jsonl(path: str) -> List[Dict[str, Any]]:
 
 
 def discover_platforms(simulation_id: str) -> List[str]:
-    """المنصّات التي جرت عليها المحاكاة فعلًا (بقراءة مجلداتها).
+    """المنصّات التي جرت عليها المحاكاة فعلًا (بقراءة ملف أفعال كل منصّة).
 
     السيناريو **يجب** أن يستخدم نفس المجموعة، وإلا صارت المقارنة بين وضعين
-    مختلفين لا بين افتراضين.
+    مختلفين لا بين افتراضين. لا نعتمد على سرد المجلدات لأن التخزين الدائم
+    مِلفّي لا شجري (Vercel + Neon)، فنفحص كل منصّة معروفة على حدة.
     """
     base = _sim_dir(simulation_id)
     found: List[str] = []
+    candidates = list(platform_registry.ORDER)
     try:
-        if storage.exists(base) and os.path.isdir(storage.ensure_local(base)):
-            for entry in sorted(os.listdir(storage.ensure_local(base))):
-                if entry in platform_registry.PLATFORMS and entry not in found:
-                    path = os.path.join(base, entry, 'actions.jsonl')
-                    if storage.exists(path):
-                        found.append(entry)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning('تعذر فحص منصّات المحاكاة %s: %s', simulation_id, exc)
-    if found:
-        return [p for p in platform_registry.ORDER if p in found]
-    # تقارير قديمة: نفحص الملفات المعروفة
-    for plat in ('twitter', 'reddit'):
-        if storage.exists(os.path.join(base, plat, 'actions.jsonl')):
-            found.append(plat)
-    return found or ['twitter', 'reddit']
+        local = storage.ensure_local(base)
+        if os.path.isdir(local):
+            for entry in sorted(os.listdir(local)):
+                if entry not in candidates:
+                    candidates.append(entry)
+    except Exception:  # noqa: BLE001
+        pass
 
+    for plat in candidates:
+        try:
+            if storage.exists(os.path.join(base, plat, 'actions.jsonl')):
+                found.append(plat)
+        except Exception:  # noqa: BLE001
+            continue
+    if found:
+        ordered = [p for p in platform_registry.ORDER if p in found]
+        ordered += [p for p in found if p not in ordered]
+        return ordered
+    # تقارير قديمة: ملف أفعال واحد بلا مجلدات منصّات
+    try:
+        if storage.exists(os.path.join(base, 'actions.jsonl')):
+            return ['twitter', 'reddit']
+    except Exception:  # noqa: BLE001
+        pass
+    return []
 
 def load_run_actions(simulation_id: str) -> List[Dict[str, Any]]:
     """وقائع المحاكاة المنشورة على كل منصّاتها."""
