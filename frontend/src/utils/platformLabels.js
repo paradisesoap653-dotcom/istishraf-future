@@ -1,5 +1,5 @@
 // أسماء المنصّات بالعربية + لون لكل منصّة.
-// المحرّك صار يعمل على فيسبوك/واتساب/تيك توك/تويتر (ورديت اختياري)، والواجهة
+// المحرّك يعمل على خمس منصّات: فيسبوك/واتساب/تيك توك/تويتر/ريديت، والواجهة
 // تبني بطاقة لكل منصّة وردت من الخادم — لا بطاقتين ثابتتين.
 
 export const PLATFORM_LABELS = {
@@ -27,7 +27,7 @@ export const PLATFORM_FORMS = {
   reddit: ['منشور', 'تعليق', 'تصويت', 'مشاركة', 'سكوت']
 }
 
-export const DEFAULT_PLATFORMS = ['facebook', 'whatsapp', 'tiktok', 'twitter']
+export const DEFAULT_PLATFORMS = ['facebook', 'whatsapp', 'tiktok', 'twitter', 'reddit']
 
 export function platformLabel(key) {
   if (!key) return ''

@@ -63,8 +63,8 @@ PLATFORMS: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# الافتراضي للسودان (يُستخدم عندما يُطلب «parallel»)
-DEFAULT_SET: List[str] = ['facebook', 'whatsapp', 'tiktok', 'twitter']
+# الافتراضي للسودان (يُطلب «parallel") — ريديت أُعيدت منصّةً خامسة بطلب صاحب المشروع
+DEFAULT_SET: List[str] = ['facebook', 'whatsapp', 'tiktok', 'twitter', 'reddit']
 
 # ترتيب ثابت لعرض الأسماء
 ORDER: List[str] = ['facebook', 'whatsapp', 'tiktok', 'twitter', 'reddit']

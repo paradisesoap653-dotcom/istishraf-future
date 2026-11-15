@@ -227,7 +227,7 @@ const handleEnterEnvSetup = async () => {
       project_id: props.projectData.project_id,
       graph_id: props.projectData.graph_id,
       // المنصّات التي يجري عليها النقاش السوداني فعلًا
-      platforms: ['facebook', 'whatsapp', 'tiktok', 'twitter']
+      platforms: ['facebook', 'whatsapp', 'tiktok', 'twitter', 'reddit']
     })
     
     if (res.success && res.data?.simulation_id) {
