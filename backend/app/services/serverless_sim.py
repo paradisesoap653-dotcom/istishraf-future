@@ -379,7 +379,7 @@ def run_serverless_simulation(
             "persona": (p.get("persona") or "")[:160],
             "primary_platform": platform_registry.preferred_for(idx, platforms),
         }
-        for idx, p in enumerate(profiles[:40])
+        for idx, p in enumerate(profiles[:24])
     ]
     # أرقام المستخدم الحقيقية (إن أدخلها) توزّع الأفعال بحسب حجم جمهوره فعلاً
     user_inputs = platform_inputs.load(os.path.basename(os.path.abspath(sim_dir)))
@@ -463,7 +463,9 @@ def run_serverless_simulation(
 
     rounds_data: List[Dict[str, Any]] = []
     next_round = 1
-    batch_size = 2
+    # حجم الدفعة: عند سقف ١٤ فعلًا أو أكثر لكل جولة، نجعلها جولة واحدة لكل
+    # طلب حتى لا يُبتر JSON (حدث فعليًا: «truncated at the token limit»).
+    batch_size = 1 if per_round_target >= 14 else 2
     started_at = time.monotonic()
     # سقف زمني: لو نُفِّذت المحاكاة داخل طلب Vercel (بدون عامل) فلا نتجاوز
     # المهلة ونُبقي ما تولّد بدل أن يُقتل الطلب ويضيع كل شيء.
