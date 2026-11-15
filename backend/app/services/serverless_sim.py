@@ -414,6 +414,22 @@ def run_serverless_simulation(
 
     llm = LLMClient()
 
+    # النصّ الأساسي المشترك: من نحن، الموضوع، الوكلاء، المنصّات، قواعد السلوك.
+    prompt = (
+        "أنت محرك محاكاة اجتماعية متعدد الوكلاء في منصة «استشراف المستقبل».\n"
+        f"موضوع الاستشراف: {requirement}\n"
+        f"السياق السردي: {narrative}\n"
+        f"المنشورات الافتتاحية: {json.dumps(initial_posts, ensure_ascii=False)}\n"
+        f"قائمة الوكلاء المتاحين: {json.dumps(agent_summary, ensure_ascii=False)}\n\n"
+        f"{platform_header}"
+        "قواعد المنصّات (مهمة):\n"
+        f"- الحقل platform يأخذ قيمة واحدة فقط من: {', '.join(platforms)}. لا تخترع منصّة أخرى.\n"
+        "- في كل جولة استخدم منصّتين مختلفتين على الأقل، ولا تحشر كل الأفعال في منصّة واحدة.\n"
+        "- احترم طبيعة المنصّة في شكل المحتوى: رسالة واتساب قصيرة داخل مجموعة، "
+        "تيك توك وصف قصير لفيديو مع تعليقات، فيسبوك منشور/تعليق، تويتر تغريدة/رد.\n"
+        "- المحتوى العربي فقط (يجوز أسماء الأعلام والأرقام).\n"
+    )
+
     # كمية الأفعال لكل جولة: كل وكيل تقريبًا يتفاعل مرة في الجولة، بسقف
     # معقول يحافظ على جودة النصّ العربي داخل حدّ الرموز.
     per_round_target = max(8, min(16, len(agent_summary) or 10))
@@ -465,10 +481,26 @@ def run_serverless_simulation(
             logger.warning(f"تعذر توليد الجولات {next_round}-{next_round + chunk - 1}: {exc}")
 
         valid = _clean_rounds(part)
+        if not valid and chunk > 1:
+            # جرّب جولة واحدة فقط (طلب أخفّ) قبل الاستسلام
+            try:
+                resp = llm.chat_json(
+                    messages=[
+                        {"role": "system", "content": "أجب بـ JSON صالح فقط."},
+                        {"role": "user", "content": _batch_prompt(next_round, 1, _context_digest(rounds_data))},
+                    ],
+                    temperature=0.75,
+                    max_tokens=2048,
+                )
+                valid = _clean_rounds(resp.get("rounds") if isinstance(resp, dict) else None)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"تعذر توليد الجولة {next_round} منفردة: {exc}")
+
         if not valid:
-            if rounds_data:
-                # أكملنا جزءًا من المحاكاة: نكتفي بما لدينا بدل إسقاط كل شيء
-                logger.warning("توقّف توليد الجولات مبكرًا؛ يُحتفظ بالمولَّد")
+            logger.warning(
+                "لم يصل أي فعل صالح للجولة %s — يُحتفظ بما تولّد حتى الآن (%s جولة)",
+                next_round, len(rounds_data),
+            )
             break
         for offset, item in enumerate(valid):
             item["round"] = next_round + offset
@@ -536,6 +568,31 @@ def run_serverless_simulation(
                         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"تعذر توليد طبقة التعليقات: {exc}")
+
+    # احتياط: نداء واحد يغطّي كل الجولات (السلوك القديم) قبل السقوط لمنشور واحد
+    if not rounds_data:
+        try:
+            resp = llm.chat_json(
+                messages=[
+                    {"role": "system", "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة."},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"{prompt}\n\nقم بمحاكاة {rounds} جولات. في كل جولة أدرج "
+                            f"{per_round_min} إلى {per_round_target} تفاعلًا.\n"
+                            f"أعد JSON فقط: {json_spec}"
+                        ),
+                    },
+                ],
+                temperature=0.75,
+            )
+            fallback_rounds = _clean_rounds(resp.get("rounds") if isinstance(resp, dict) else None)
+            if fallback_rounds:
+                for idx, item in enumerate(fallback_rounds, start=1):
+                    item["round"] = idx
+                rounds_data = fallback_rounds
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"تعذر الاحتياط الكامل للمحاكاة: {exc}")
 
     # احتياط أخير: لم يولّد النموذج شيئًا صالحًا → منشور واحد يمنع فشل المحاكاة
     if not rounds_data:
