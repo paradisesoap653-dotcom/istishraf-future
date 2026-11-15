@@ -689,11 +689,6 @@ class SimulationRunner:
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.error("فشل تنفيذ المحاكاة السحابية: %s", exc)
-            if Config.IS_SERVERLESS:
-                _exec_lightweight()
-            else:
-                t_worker = threading.Thread(target=_exec_lightweight, daemon=True)
-                t_worker.start()
             return state
 
         # 确定运行哪个脚本（脚本位于 backend/scripts/ 目录）
