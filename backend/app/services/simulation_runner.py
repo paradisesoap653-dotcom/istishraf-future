@@ -1366,28 +1366,32 @@ class SimulationRunner:
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
         actions = []
         
-        # 读取 Twitter 动作文件（根据文件路径自动设置 platform 为 twitter）
-        twitter_actions_log = os.path.join(sim_dir, "twitter", "actions.jsonl")
-        if not platform or platform == "twitter":
+        # كل منصّة لها ملف أفعالها: فيسبوك/واتساب/تيك توك/تويتر/ريديت...
+        # (كان يقرأ تويتر وريديت فقط، فبدت المنصّات الأخرى كأنها لم تعمل)
+        try:
+            from . import platforms as _pr
+            platform_keys = list(_pr.ORDER)
+        except Exception:  # noqa: BLE001
+            platform_keys = ["twitter", "reddit", "facebook", "whatsapp", "tiktok"]
+
+        try:
+            for entry in os.listdir(sim_dir):
+                if entry not in platform_keys and os.path.isdir(os.path.join(sim_dir, entry)):
+                    platform_keys.append(entry)
+        except Exception:  # noqa: BLE001
+            pass
+
+        for plat in platform_keys:
+            if platform and platform != plat:
+                continue
             actions.extend(cls._read_actions_from_file(
-                twitter_actions_log,
-                default_platform="twitter",  # 自动填充 platform 字段
-                platform_filter=platform,
-                agent_id=agent_id, 
-                round_num=round_num
-            ))
-        
-        # 读取 Reddit 动作文件（根据文件路径自动设置 platform 为 reddit）
-        reddit_actions_log = os.path.join(sim_dir, "reddit", "actions.jsonl")
-        if not platform or platform == "reddit":
-            actions.extend(cls._read_actions_from_file(
-                reddit_actions_log,
-                default_platform="reddit",  # 自动填充 platform 字段
+                os.path.join(sim_dir, plat, "actions.jsonl"),
+                default_platform=plat,
                 platform_filter=platform,
                 agent_id=agent_id,
                 round_num=round_num
             ))
-        
+
         # 如果分平台文件不存在，尝试读取旧的单一文件格式
         if not actions:
             actions_log = os.path.join(sim_dir, "actions.jsonl")

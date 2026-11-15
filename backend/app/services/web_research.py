@@ -135,10 +135,13 @@ def _result_to_fact(item: Dict[str, Any], source_label: str = '') -> Optional[Di
     snippet = _clean(item.get('snippet') or item.get('description') or '', 400)
     if not (title or snippet):
         return None
+    raw_source = item.get('source')
+    if isinstance(raw_source, dict):
+        raw_source = raw_source.get('name') or ''
     return {
         'title': title,
         'snippet': snippet,
-        'source': _clean(item.get('source') or source_label, 80),
+        'source': _clean(raw_source if isinstance(raw_source, str) else source_label, 80),
         'url': _clean(item.get('link') or item.get('url'), 300),
         'date': _clean(item.get('date') or item.get('published_at'), 40),
     }
