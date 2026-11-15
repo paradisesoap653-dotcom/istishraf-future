@@ -2138,8 +2138,8 @@ def get_run_status_detail(simulation_id: str):
         # 获取基础状态信息
         result = run_state.to_dict()
         result["all_actions"] = [a.to_dict() for a in all_actions]
-        result["twitter_actions"] = [a.to_dict() for a in twitter_actions]
-        result["reddit_actions"] = [a.to_dict() for a in reddit_actions]
+        result["twitter_actions"] = twitter_actions
+        result["reddit_actions"] = reddit_actions
         result["platform_actions"] = platform_action_lists
         result["rounds_count"] = len(run_state.rounds)
         # recent_actions 只展示当前最新一轮两个平台的内容
