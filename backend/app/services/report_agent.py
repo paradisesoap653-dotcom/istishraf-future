@@ -2141,7 +2141,21 @@ class ReportAgent:
             temperature=0.6,
             max_tokens=1400,
         )
-        return (content or "").strip()
+        return self._strip_repeated_title((content or "").strip(), section.title)
+
+    @staticmethod
+    def _strip_repeated_title(content: str, title: str) -> str:
+        """أزل تكرار عنوان القسم في أول سطر (يظهر مرتين في بعض المخرجات)."""
+        if not content:
+            return content
+        lines = content.splitlines()
+        if not lines:
+            return content
+        first = lines[0].strip().lstrip("#").strip().strip("*").strip()
+        if first and title and (first == title.strip() or first.startswith(title.strip())):
+            rest = "\n".join(lines[1:]).lstrip("\n")
+            return rest or content
+        return content
 
     @staticmethod
     def _friendly_error_message(error: Exception) -> str:
