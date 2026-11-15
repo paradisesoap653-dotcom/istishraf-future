@@ -936,9 +936,20 @@ def get_report_grounding(report_id):
     report = ReportManager.get_report(report_id)
     if not report:
         return jsonify({'success': False, 'error': 'التقرير غير موجود'}), 404
-    user = get_current_user()
-    if user and report.user_id and report.user_id != user.get('id') and user.get('role') != 'admin':
-        return jsonify({'success': False, 'error': 'غير مصرّح'}), 403
+    try:
+        from ..models.user import get_current_user as _who
+        from ..models.user import UserStore as _Owners
+
+        user = _who()
+        owner = None
+        try:
+            owner = _Owners.report_owner(report_id)
+        except Exception:  # noqa: BLE001
+            owner = None
+        if user and owner and owner != user.get('id') and user.get('role') != 'admin':
+            return jsonify({'success': False, 'error': 'غير مصرّح'}), 403
+    except Exception:  # noqa: BLE001
+        pass
     try:
         path = os.path.join(
             ReportManager._get_report_folder(report_id), 'grounding.txt'
