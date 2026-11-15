@@ -31,6 +31,48 @@ logger = get_logger('mirofish.api.report')
 
 # ============== 报告生成接口 ==============
 
+def _with_effective_status(report) -> dict:
+    """بيانات التقرير مع حالة صادقة: «مكتمل» بلا محتوى تُعرض «فاشل»."""
+    data = report.to_dict() if hasattr(report, "to_dict") else dict(report or {})
+    try:
+        if not _report_is_usable(report):
+            data["status"] = "failed"
+            if not data.get("error"):
+                data["error"] = "لم يُولَّد محتوى التقرير. أعد المحاولة."
+            data["retryable"] = True
+    except Exception:  # noqa: BLE001
+        pass
+    return data
+
+
+def _report_is_usable(report) -> bool:
+    """تقرير «مكتمل» بلا محتوى = توليد فشل (مثل نفاد الحصة اليومية).
+
+    كان يُعرض للمستخدم «مكتمل» مع رسالة خطأ، ويُمنع إعادة التوليد برسالة
+    «التقرير موجود بالفعل» — فيبقى بلا تقرير حتى اليوم التالي.
+    """
+    if report is None:
+        return False
+    try:
+        from ..services.report_agent import ReportStatus
+
+        if report.status != ReportStatus.COMPLETED:
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    body = (getattr(report, "markdown_content", "") or "").strip()
+    if body:
+        return True
+    # قد يكون المحتوى محفوظًا في الملفات دون تحميله في السجل
+    try:
+        from ..services.report_agent import ReportManager
+
+        sections = ReportManager.get_generated_sections(getattr(report, "report_id", ""))
+        return bool(sections)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @report_bp.route('/generate', methods=['POST'])
 def generate_report():
     """
@@ -229,10 +271,7 @@ def generate_report():
                 existing_report = ReportManager.get_report_by_simulation(
                     simulation_id
                 )
-                if (
-                    existing_report
-                    and existing_report.status == ReportStatus.COMPLETED
-                ):
+                if _report_is_usable(existing_report):
                     return jsonify({
                         "success": True,
                         "data": {
@@ -372,7 +411,7 @@ def get_generate_status():
         # 如果提供了simulation_id，先检查是否已有完成的报告
         if simulation_id:
             existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
+            if _report_is_usable(existing_report):
                 return jsonify({
                     "success": True,
                     "data": {
@@ -445,7 +484,7 @@ def get_report(report_id: str):
         
         return jsonify({
             "success": True,
-            "data": report.to_dict()
+            "data": _with_effective_status(report)
         })
         
     except Exception as e:
