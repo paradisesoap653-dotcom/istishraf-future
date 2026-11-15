@@ -2973,6 +2973,45 @@ class ReportManager:
         return None
     
     @classmethod
+    def index_by_simulation(cls) -> Dict[str, Dict[str, Any]]:
+        """فهرس: لكل محاكاة أحدث تقرير لها (بلا قراءة التقرير كاملًا).
+
+        سبب وجوده: كانت شاشة السجل تنظر إلى الملفات الموجودة على قرص هذه النسخة
+        من الخادم فقط، فيظهر عدد التقارير الجاهزة ٣ أو ٤ مرة، ثم يعود ١ في طلب
+        آخر. الفهرس يُبنى من التخزين الدائم (Postgres) فيكون ثابتًا لكل الطلبات.
+        """
+        index: Dict[str, Dict[str, Any]] = {}
+        try:
+            cls._ensure_reports_dir()
+            items = storage.listdir(cls.REPORTS_DIR)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("تعذر سرد تقارير الفهرس: %s", exc)
+            return index
+
+        for item in items:
+            report_id = item[:-5] if item.endswith(".json") else item
+            meta_path = os.path.join(cls.REPORTS_DIR, report_id, "meta.json")
+            meta = storage.read_json_fresh(meta_path)
+            if meta is None:
+                legacy = os.path.join(cls.REPORTS_DIR, f"{report_id}.json")
+                meta = storage.read_json_fresh(legacy)
+            if not isinstance(meta, dict):
+                continue
+            simulation_id = meta.get("simulation_id")
+            if not simulation_id:
+                continue
+            entry = {
+                "report_id": meta.get("report_id") or report_id,
+                "status": meta.get("status") or "",
+                "created_at": meta.get("created_at") or "",
+                "title": meta.get("title") or "",
+            }
+            current = index.get(simulation_id)
+            if current is None or (entry["created_at"] or "") > (current["created_at"] or ""):
+                index[simulation_id] = entry
+        return index
+
+    @classmethod
     def list_reports(cls, simulation_id: Optional[str] = None, limit: int = 50) -> List[Report]:
         """列出报告"""
         cls._ensure_reports_dir()

@@ -31,7 +31,7 @@
           <div class="rr-main">
             <div class="rr-top">
               <span class="rr-badge" :class="project.report_id ? 'ready' : 'pending'">
-                {{ project.report_id ? 'تقرير جاهز' : 'لم يكتمل' }}
+                {{ badgeText(project) }}
               </span>
               <span class="rr-id">{{ formatSimulationId(project.simulation_id) }}</span>
             </div>
@@ -190,8 +190,17 @@ const historyContainer = ref(null)
 const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
 const filter = ref('reports')  // reports = التقارير الجاهزة، all = كل المحاكاة
 
-// المشاريع التي اكتمل تقريرها
+// المشاريع التي اكتمل تقريرها فعلًا (العدد هنا هو نفسه عدد الصفوف المعروضة)
 const finalReports = computed(() => projects.value.filter(p => p.report_id))
+
+// نص الشارة: لا نقول «تقرير جاهز» إلا إذا اكتمل التقرير فعلًا
+const badgeText = (project) => {
+  if (project.report_id) return 'تقرير جاهز'
+  const st = project.report_status
+  if (st === 'generating' || st === 'planning' || st === 'pending') return 'قيد التوليد'
+  if (st === 'failed') return 'تعذّر التقرير'
+  return 'لم يكتمل'
+}
 const visibleProjects = computed(() => (filter.value === 'reports' ? finalReports.value : projects.value))
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁

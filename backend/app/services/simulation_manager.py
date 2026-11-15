@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..config import Config
+from . import platforms as platform_registry
 from ..models import storage
 from ..utils.logger import get_logger
 from .zep_entity_reader import ZepEntityReader, FilteredEntities
@@ -565,26 +566,26 @@ class SimulationManager:
         if platform is None:
             platform = state.get_default_platform()
 
-        if platform not in {"twitter", "reddit"}:
-            raise ValueError(f"不支持的平台: {platform}")
+        known = set(platform_registry.ORDER) | set(state.platforms or [])
+        if platform not in known:
+            raise ValueError(f"منصّة غير مدعومة: {platform}")
 
+        # الملفات الشخصية واحدة لكل الوكلاء، وهم يشاركون في كل المنصّات؛ فطلب
+        # بروفايلات فيسبوك أو واتساب أو تيك توك كان يفشل قبل هذا الإصلاح.
         sim_dir = self._get_simulation_dir(simulation_id)
-        profile_path = os.path.join(
-            sim_dir,
-            "twitter_profiles.csv" if platform == "twitter" else "reddit_profiles.json",
-        )
-        
-        if not storage.exists(profile_path):
-            return []
+        json_path = os.path.join(sim_dir, "reddit_profiles.json")
+        csv_path = os.path.join(sim_dir, "twitter_profiles.csv")
 
-        loaded = storage.read_json(profile_path)
-        if platform == "twitter":
+        if storage.exists(json_path):
+            loaded = storage.read_json_fresh(json_path)
+            if isinstance(loaded, list) and loaded:
+                return loaded
+        if storage.exists(csv_path):
             import csv
 
-            with open(storage.ensure_local(profile_path), 'r', encoding='utf-8', newline='') as f:
+            with open(storage.ensure_local(csv_path), 'r', encoding='utf-8', newline='') as f:
                 return list(csv.DictReader(f))
-
-        return loaded if isinstance(loaded, list) else []
+        return []
     
     def get_simulation_config(self, simulation_id: str) -> Optional[Dict[str, Any]]:
         """获取模拟配置"""

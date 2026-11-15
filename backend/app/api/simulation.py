@@ -884,63 +884,37 @@ def list_simulations():
         }), 500
 
 
-def _get_report_id_for_simulation(simulation_id: str) -> str:
+_REPORTS_INDEX_TTL = 20.0
+_reports_index_cache = {"at": 0.0, "value": {}}
+
+
+def _reports_index() -> dict:
+    """فهرس المحاكاة → أحدث تقرير، مخزَّن مؤقتًا ٢٠ ثانية داخل النسخة نفسها."""
+    import time
+
+    from ..services.report_agent import ReportManager
+
+    now = time.time()
+    if now - _reports_index_cache["at"] < _REPORTS_INDEX_TTL and _reports_index_cache["value"]:
+        return _reports_index_cache["value"]
+    value = ReportManager.index_by_simulation()
+    _reports_index_cache["at"] = now
+    _reports_index_cache["value"] = value
+    return value
+
+
+def _get_report_id_for_simulation(simulation_id: str, completed_only: bool = False) -> str:
+    """معرّف أحدث تقرير لهذه المحاكاة (من التخزين الدائم لا من قرص هذه النسخة).
+
+    النسخة السابقة كانت تفتح مجلد التقارير على القرص المحلي، وهو فارغ في أي
+    نسخة جديدة من الخادم، فكانت الشاشة تُظهر «٣ تقارير جاهزة» ثم تعود «١».
     """
-    获取 simulation 对应的最新 report_id
-    
-    遍历 reports 目录，找出 simulation_id 匹配的 report，
-    如果有多个则返回最新的（按 created_at 排序）
-    
-    Args:
-        simulation_id: 模拟ID
-        
-    Returns:
-        report_id 或 None
-    """
-    import json
-    from datetime import datetime
-    
-    # reports 目录路径：backend/uploads/reports
-    # __file__ 是 app/api/simulation.py，需要向上两级到 backend/
-    reports_dir = os.path.join(Config.UPLOAD_FOLDER, 'reports')
-    if not os.path.exists(reports_dir):
+    entry = _reports_index().get(simulation_id)
+    if not entry:
         return None
-    
-    matching_reports = []
-    
-    try:
-        for report_folder in os.listdir(reports_dir):
-            report_path = os.path.join(reports_dir, report_folder)
-            if not os.path.isdir(report_path):
-                continue
-            
-            meta_file = os.path.join(report_path, "meta.json")
-            if not os.path.exists(meta_file):
-                continue
-            
-            try:
-                with open(meta_file, 'r', encoding='utf-8') as f:
-                    meta = json.load(f)
-                
-                if meta.get("simulation_id") == simulation_id:
-                    matching_reports.append({
-                        "report_id": meta.get("report_id"),
-                        "created_at": meta.get("created_at", ""),
-                        "status": meta.get("status", "")
-                    })
-            except Exception:
-                continue
-        
-        if not matching_reports:
-            return None
-        
-        # 按创建时间倒序排序，返回最新的
-        matching_reports.sort(key=lambda x: x.get("created_at", ""), reverse=True)
-        return matching_reports[0].get("report_id")
-        
-    except Exception as e:
-        logger.warning(f"查找 simulation {simulation_id} 的 report 失败: {e}")
+    if completed_only and (entry.get("status") or "") != "completed":
         return None
+    return entry.get("report_id")
 
 
 @simulation_bp.route('/history', methods=['GET'])
@@ -1033,8 +1007,12 @@ def get_simulation_history():
             else:
                 sim_dict["files"] = []
             
-            # 获取关联的 report_id（查找该 simulation 最新的 report）
-            sim_dict["report_id"] = _get_report_id_for_simulation(sim.simulation_id)
+            # التقرير المرتبط: يُعرض كـ«جاهز» فقط إذا اكتمل فعلًا
+            entry = _reports_index().get(sim.simulation_id) or {}
+            status = (entry.get("status") or "").lower()
+            sim_dict["report_id"] = entry.get("report_id") if status == "completed" else None
+            sim_dict["report_status"] = status or None
+            sim_dict["report_is_ready"] = status == "completed"
             
             # 添加版本号
             sim_dict["version"] = "v1.0.2"
