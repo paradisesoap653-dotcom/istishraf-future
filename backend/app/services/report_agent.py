@@ -1911,7 +1911,7 @@ class ReportAgent:
             ],
         )
 
-    def _build_grounding_context(self, max_chars: int = 7000) -> str:
+    def _build_grounding_context(self, max_chars: int = 8200) -> str:
         """يجمع معطيات التقرير محليًا (بحث الويب + المنصّات + الشبكة + الشارع).
 
         الترتيب مقصود: وقائع الموضوع أولًا ثم تفاعلات المنصّات الحقيقية، لأن
@@ -1951,6 +1951,38 @@ class ReportAgent:
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر إدراج وقائع بحث الويب في التقرير: %s", exc)
 
+        # توزيع التفاعلات على المنصّات: سطر واحد يضمن ذكر كل منصّة بالأرقام
+        try:
+            mix: List[str] = []
+            total = 0
+            for platform in platform_registry.ORDER:
+                raw_mix = storage.read_text_fresh(
+                    f"simulations/{self.simulation_id}/{platform}/actions.jsonl"
+                ) or ""
+                count = 0
+                for line in raw_mix.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if "event_type" in item or "agent_id" not in item:
+                        continue
+                    count += 1
+                if count:
+                    mix.append(f"{platform_registry.label(platform)} {count}")
+                    total += count
+            if mix:
+                head.append(
+                    "توزيع التفاعلات على المنصّات في المحاكاة (أرقام حقيقية من "
+                    "تشغيل المحاكاة): " + "، ".join(mix) + f" (المجموع {total}). "
+                    "اذكر المنصّات التي لها تفاعل فعلي، وبيّن اختلاف نبرة الحوار بينها."
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر حساب توزيع المنصّات للتقرير: %s", exc)
+
         # تفاعلات كل منصّة على حدة: أرقام حقيقية ونصوص حقيقية
         for platform in platform_registry.ORDER:
             try:
@@ -1961,7 +1993,7 @@ class ReportAgent:
                 if not lines:
                     continue
                 texts: List[str] = []
-                for line in lines[-8:]:
+                for line in lines[-5:]:
                     try:
                         item = json.loads(line)
                     except json.JSONDecodeError:
