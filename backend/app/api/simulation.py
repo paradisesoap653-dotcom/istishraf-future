@@ -314,13 +314,14 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     if not os.path.exists(simulation_dir) and not storage.isdir(simulation_dir):
         return False, {"reason": "模拟目录不存在"}
     
-    # 必要文件列表（不包括脚本，脚本位于 backend/scripts/）
+    # الملفات الأساسية + ملف بروفايلات واحد على الأقل.
+    # اشتراط الملفّين معًا كان يمنع إعادة تشغيل محاكاة متعددة المنصّات
+    # (تُكتب فيها البروفايلات بصيغة JSON فقط) برسالة «غير جاهزة».
     required_files = [
         "state.json",
         "simulation_config.json",
-        "reddit_profiles.json",
-        "twitter_profiles.csv"
     ]
+    profile_files = ["reddit_profiles.json", "twitter_profiles.csv"]
     
     # 检查文件是否存在
     existing_files = []
@@ -332,6 +333,15 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
         else:
             missing_files.append(f)
     
+    if not missing_files:
+        for f in profile_files:
+            file_path = ensure_local_file(os.path.join(simulation_dir, f))
+            if os.path.exists(file_path):
+                existing_files.append(f)
+                break
+        else:
+            missing_files.append("profiles (reddit_profiles.json أو twitter_profiles.csv)")
+
     if missing_files:
         return False, {
             "reason": "缺少必要文件",
