@@ -1731,6 +1731,15 @@ class ReportAgent:
             total_sections = len(outline.sections)
             generated_sections = []  # 保存内容用于上下文
             grounding_context = self._build_grounding_context()
+            # نحفظ ما دخل إلى النموذج فعلًا، حتى يمكن تشخيص أي تقرير يبدو عامًا
+            # (كأن يقول «لا توجد بيانات» بينما الأرقام كانت متاحة).
+            try:
+                storage.write_text(
+                    os.path.join(ReportManager._get_report_folder(report_id), "grounding.txt"),
+                    grounding_context,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             
             for i, section in enumerate(outline.sections):
                 section_num = i + 1
@@ -1911,6 +1920,53 @@ class ReportAgent:
             ],
         )
 
+    def _mix_line(self) -> str:
+        """نسخة مخزّنة من سطر توزيع المنصّات (يُحسب مرة واحدة لكل تقرير)."""
+        cached = getattr(self, "_mix_cache", None)
+        if cached is None:
+            cached = self._platform_mix_line()
+            self._mix_cache = cached
+        return cached
+
+    def _platform_mix_line(self) -> str:
+        """سطر أرقام التفاعلات لكل منصّة، يُحقن في كل قسم من التقرير."""
+        try:
+            from . import platforms as platform_registry
+
+            mix: List[str] = []
+            total = 0
+            for platform in platform_registry.ORDER:
+                raw = storage.read_text_fresh(
+                    f"simulations/{self.simulation_id}/{platform}/actions.jsonl"
+                ) or ""
+                count = 0
+                for line in raw.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if "event_type" in item or "agent_id" not in item:
+                        continue
+                    count += 1
+                if count:
+                    mix.append(f"{platform_registry.label(platform)} {count}")
+                    total += count
+            if not mix:
+                return ""
+            return (
+                "توزيع التفاعلات على المنصّات (أرقام فعلية من تشغيل المحاكاة، "
+                "استخدمها حرفيًا ولا تنفِ وجودها): " + "، ".join(mix)
+                + f" (المجموع {total}). اذكر المنصّات التي لها تفاعل، وبيّن اختلاف "
+                "نبرة الحوار بينها (فيسبوك أطول وأكثر جدلًا، واتساب دوائر ضيقة، "
+                "تيك توك مقاطع قصيرة، تويتر سريع ومختصر)."
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر حساب توزيع المنصّات: %s", exc)
+            return ""
+
     def _build_grounding_context(self, max_chars: int = 8200) -> str:
         """يجمع معطيات التقرير محليًا (بحث الويب + المنصّات + الشبكة + الشارع).
 
@@ -1951,37 +2007,9 @@ class ReportAgent:
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر إدراج وقائع بحث الويب في التقرير: %s", exc)
 
-        # توزيع التفاعلات على المنصّات: سطر واحد يضمن ذكر كل منصّة بالأرقام
-        try:
-            mix: List[str] = []
-            total = 0
-            for platform in platform_registry.ORDER:
-                raw_mix = storage.read_text_fresh(
-                    f"simulations/{self.simulation_id}/{platform}/actions.jsonl"
-                ) or ""
-                count = 0
-                for line in raw_mix.splitlines():
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        item = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if "event_type" in item or "agent_id" not in item:
-                        continue
-                    count += 1
-                if count:
-                    mix.append(f"{platform_registry.label(platform)} {count}")
-                    total += count
-            if mix:
-                head.append(
-                    "توزيع التفاعلات على المنصّات في المحاكاة (أرقام حقيقية من "
-                    "تشغيل المحاكاة): " + "، ".join(mix) + f" (المجموع {total}). "
-                    "اذكر المنصّات التي لها تفاعل فعلي، وبيّن اختلاف نبرة الحوار بينها."
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("تعذر حساب توزيع المنصّات للتقرير: %s", exc)
+        mix_line = self._mix_line()
+        if mix_line:
+            head.append(mix_line)
 
         # تفاعلات كل منصّة على حدة: أرقام حقيقية ونصوص حقيقية
         for platform in platform_registry.ORDER:
@@ -2090,7 +2118,8 @@ class ReportAgent:
             f"عنوان التقرير: {outline.title}\n"
             f"ملخص التقرير: {outline.summary}\n"
             f"هدف الدراسة: {self.simulation_requirement}\n\n"
-            f"المعطيات المتاحة من المحاكاة:\n{grounding or 'لا توجد معطيات تفصيلية؛ اعتمد على هدف الدراسة.'}\n\n"
+            + (f"{self._mix_line()}\n\n" if self._mix_line() else "")
+            + f"المعطيات المتاحة من المحاكاة:\n{grounding or 'لا توجد معطيات تفصيلية؛ اعتمد على هدف الدراسة.'}\n\n"
             f"القسم المطلوب ({section_index}/{len(outline.sections)}): {section.title}\n"
             f"وصف القسم: {section.description}\n\n"
             + (f"ملخص ما كتبته في الأقسام السابقة:\n{previous_text}\n\n" if previous_text else "")
