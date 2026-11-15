@@ -1987,6 +1987,132 @@ def preview_web_research():
         return jsonify({"success": False, "error": "تعذر البحث الآن"}), 500
 
 
+def _reconcile_run_state(simulation_id: str, run_state):
+    """يوائم عدّادات التشغيل مع واقع الملفات والحالة المخزّنة.
+
+    سبب الحاجة: المحاكاة قد تُنفَّذ في العامل (GitHub Actions) أو في نسخة أخرى
+    من الخادم، فيكتب حالةَ التشغيل هناك ولا تصل نسختُه المحلية إلى هنا. النتيجة
+    كانت تظهر «قيد التشغيل 0/12» مع أفعال موجودة فعلًا (٩١ فعلًا في اختبارنا).
+    """
+    from ..config import Config
+    from ..services.simulation_runner import SimulationRunner
+
+    sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+    counts = {}
+    max_round = 0
+    try:
+        from ..services import platforms as _pr
+
+        platform_keys = list(_pr.ORDER)
+    except Exception:  # noqa: BLE001
+        platform_keys = ["facebook", "whatsapp", "tiktok", "twitter", "reddit"]
+
+    for plat in platform_keys:
+        try:
+            actions = SimulationRunner.get_all_actions(simulation_id=simulation_id, platform=plat)
+        except Exception:  # noqa: BLE001
+            actions = []
+        if not actions:
+            continue
+        counts[plat] = len(actions)
+        for act in actions:
+            try:
+                max_round = max(max_round, int(getattr(act, "round_num", 0) or 0))
+            except (TypeError, ValueError):
+                pass
+
+    stored_status = None
+    try:
+        from ..services.simulation_manager import SimulationManager
+
+        sim = SimulationManager().get_simulation(simulation_id)
+        if sim is not None:
+            raw = getattr(sim, "status", None)
+            stored_status = getattr(raw, "value", raw)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if run_state is None:
+        if not counts:
+            return None
+        class _Synthetic:  # noqa: D401
+            pass
+
+        synth = _Synthetic()
+        synth.runner_status = stored_status or "completed"
+        synth.current_round = max_round
+        synth.total_rounds = max_round
+        synth.simulated_hours = max_round
+        synth.total_simulation_hours = max_round
+        synth.platforms = list(counts)
+        synth.platform_actions = dict(counts)
+        synth.platform_rounds = {p: max_round for p in counts}
+        synth.platform_running = {p: False for p in counts}
+        synth.platform_completed = {p: True for p in counts}
+        synth.platform_hours = {p: max_round for p in counts}
+        synth.started_at = None
+        synth.updated_at = None
+        synth.completed_at = None
+        synth.error = None
+
+        def _to_dict():
+            return {
+                "simulation_id": simulation_id,
+                "runner_status": synth.runner_status,
+                "current_round": max_round,
+                "total_rounds": max_round,
+                "progress_percent": 100.0,
+                "simulated_hours": max_round,
+                "total_simulation_hours": max_round,
+                "platforms": {
+                    p: {
+                        "platform": p,
+                        "label": p,
+                        "actions_count": counts.get(p, 0),
+                        "completed": True,
+                        "running": False,
+                        "current_round": max_round,
+                    }
+                    for p in counts
+                },
+                "total_actions_count": sum(counts.values()),
+            }
+
+        synth.to_dict = _to_dict
+        return synth
+
+    try:
+        if counts:
+            for plat, cnt in counts.items():
+                if plat not in (run_state.platforms or []):
+                    run_state.platforms.append(plat)
+                run_state.platform_actions[plat] = cnt
+                run_state.platform_rounds[plat] = max_round
+                run_state.platform_completed[plat] = True
+                run_state.platform_running[plat] = False
+            run_state.current_round = max(run_state.current_round or 0, max_round)
+            run_state.total_rounds = max(run_state.total_rounds or 0, max_round)
+            run_state.total_actions_count = sum(counts.values())
+            if stored_status in ("completed", "stopped", "failed"):
+                try:
+                    from ..services.simulation_runner import RunnerStatus
+
+                    run_state.runner_status = RunnerStatus(stored_status)
+                except Exception:  # noqa: BLE001
+                    pass
+        elif stored_status in ("completed", "stopped", "failed") and (
+            getattr(run_state.runner_status, "value", run_state.runner_status)
+            in ("starting", "running")
+        ):
+            from ..services.simulation_runner import RunnerStatus
+
+            run_state.runner_status = RunnerStatus(stored_status)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر مواءمة حالة التشغيل %s: %s", simulation_id, exc)
+    return run_state
+
+
+
 @simulation_bp.route('/<simulation_id>/run-status', methods=['GET'])
 def get_run_status(simulation_id: str):
     """
@@ -2015,7 +2141,8 @@ def get_run_status(simulation_id: str):
     """
     try:
         run_state = SimulationRunner.get_run_state(simulation_id)
-        
+        run_state = _reconcile_run_state(simulation_id, run_state)
+
         if not run_state:
             return jsonify({
                 "success": True,
@@ -2084,6 +2211,7 @@ def get_run_status_detail(simulation_id: str):
     """
     try:
         run_state = SimulationRunner.get_run_state(simulation_id)
+        run_state = _reconcile_run_state(simulation_id, run_state)
         platform_filter = request.args.get('platform')
         
         if not run_state:
