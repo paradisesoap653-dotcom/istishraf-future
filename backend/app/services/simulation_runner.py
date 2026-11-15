@@ -477,7 +477,6 @@ class SimulationRunner:
         cls._run_states[state.simulation_id] = state
     
     @classmethod
-    @classmethod
     def run_lightweight_simulation(cls, simulation_id: str, platform: str = "",
                                    max_rounds: int = None) -> None:
         """المحرّك السحابي الخفيف: يولّد المحاكاة ويحدّث حالتها.
@@ -562,6 +561,7 @@ class SimulationRunner:
                 cls._save_run_state(state)
                 cls._sync_simulation_status(simulation_id, RunnerStatus.FAILED, state.error)
 
+    @classmethod
     def start_simulation(
         cls,
         simulation_id: str,
