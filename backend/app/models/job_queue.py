@@ -104,6 +104,16 @@ def reset_schema_cache() -> None:
 # --------------------------------------------------------------------------
 # إدخال المهام
 # --------------------------------------------------------------------------
+def _wake_worker(kind: str) -> None:
+    """أيقظ عامل GitHub Actions فور إدخال مهمة (جدول Actions غير موثوق)."""
+    try:
+        from ..utils import worker_wake
+
+        worker_wake.wake_async(kind)
+    except Exception:  # pragma: no cover - الإيقاظ رفاهية لا تُسقط المهمة
+        pass
+
+
 
 def enqueue(
     kind: str,
@@ -141,6 +151,7 @@ def enqueue(
             )
             row = cur.fetchone()
             if row:
+                _wake_worker(kind)
                 return int(row[0])
             if dedupe_key:
                 cur.execute(
@@ -490,10 +501,20 @@ def stats() -> Dict[str, Any]:
             "stale_pending": stale,
             "active_workers": workers,
             "worker_healthy": persistent_live > 0 or counts.get("pending", 0) == 0,
+            "wake": _wake_status(),
         }
     except Exception as exc:
         logger.error(f"تعذر قراءة حالة الطابور: {exc}")
         return {"enabled": True, "error": "unavailable"}
+
+
+def _wake_status() -> Dict[str, Any]:
+    try:
+        from ..utils import worker_wake
+
+        return worker_wake.status()
+    except Exception:  # pragma: no cover
+        return {"configured": None}
 
 
 def purge_finished(older_than_days: int = 7) -> int:
