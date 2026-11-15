@@ -1874,7 +1874,8 @@ class ReportAgent:
                 logger.warning("تعذر حفظ التقرير الجزئي: %s", partial_exc)
 
             report.status = ReportStatus.FAILED
-            report.error = str(e)
+            # رسالة عربية مفهومة بدل نصّ خطأ المزوّد الخام (429 / tokens per day)
+            report.error = friendly
             
             # 记录错误日志
             if self.report_logger:

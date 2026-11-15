@@ -626,6 +626,68 @@ def run_serverless_simulation(
 
     rounds_data = _clamp_platforms(rounds_data, platforms)
 
+    # حماية من «تدهور النتيجة»: إذا نفدت حصة النموذج في تشغيلٍ جديد، لا نكتب
+    # نسخة أفقر فوق نسخة ناجحة سابقة. (حدث فعليًا: محاكاة بـ٩١ تفاعلًا صارت
+    # تفاعلًا واحدًا بعد إعادة تشغيل فاشلة، فقرأ مولّد التقرير النسخة الفقيرة.)
+    try:
+        from ..models import storage as _storage
+
+        previous_total = 0
+        for plat in platforms:
+            for source in (
+                f"simulations/{os.path.basename(sim_dir)}/{plat}/actions.jsonl",
+                os.path.join(sim_dir, plat, "actions.jsonl"),
+            ):
+                raw = ""
+                try:
+                    if os.path.isabs(source) and os.path.exists(source):
+                        raw = open(source, encoding='utf-8').read()
+                    elif not os.path.isabs(source):
+                        raw = _storage.read_text_fresh(source) or ""
+                except Exception:  # noqa: BLE001
+                    raw = ""
+                previous_total = max(
+                    previous_total,
+                    sum(1 for ln in raw.splitlines() if ln.strip() and '"agent_id"' in ln),
+                )
+        new_total = sum(len(r.get("actions") or []) for r in rounds_data)
+        if previous_total and new_total < previous_total:
+            logger.warning(
+                "النسخة الجديدة أضعف (%s < %s تفاعلًا) — يُحتفظ بالنسخة السابقة",
+                new_total, previous_total,
+            )
+            kept: Dict[str, int] = {}
+            for plat in platforms:
+                raw = ""
+                local_path = os.path.join(sim_dir, plat, "actions.jsonl")
+                try:
+                    if os.path.exists(local_path):
+                        raw = open(local_path, encoding='utf-8').read()
+                except OSError:
+                    raw = ""
+                if not raw:
+                    raw = _storage.read_text_fresh(
+                        f"simulations/{os.path.basename(sim_dir)}/{plat}/actions.jsonl"
+                    ) or ""
+                kept[plat] = sum(1 for ln in raw.splitlines() if ln.strip() and '"agent_id"' in ln)
+                try:
+                    _storage.ensure_local(
+                        f"simulations/{os.path.basename(sim_dir)}/{plat}/actions.jsonl"
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+            return {
+                "rounds_completed": max(1, len(rounds_data)),
+                "platforms": platforms,
+                "platform_actions": kept,
+                "twitter_actions": kept.get("twitter", 0),
+                "reddit_actions": kept.get("reddit", 0),
+                "total_actions": sum(kept.values()),
+                "kept_previous": True,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر مقارنة النسخ قبل الكتابة: %s", exc)
+
     counts = write_simulation_artifacts(sim_dir, profiles, rounds_data, platforms)
 
     # احفظ مخرجات المحاكاة في التخزين الدائم فورًا، فالقرص المؤقت يُفقد بعد
