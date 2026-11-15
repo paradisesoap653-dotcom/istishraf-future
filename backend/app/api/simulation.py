@@ -2259,7 +2259,7 @@ def get_run_status_detail(simulation_id: str):
         result["twitter_actions"] = twitter_actions
         result["reddit_actions"] = reddit_actions
         result["platform_actions"] = platform_action_lists
-        result["rounds_count"] = len(run_state.rounds)
+        result["rounds_count"] = max(len(run_state.rounds), int(result.get("current_round") or 0))
         # recent_actions 只展示当前最新一轮两个平台的内容
         result["recent_actions"] = [a.to_dict() for a in recent_actions]
         

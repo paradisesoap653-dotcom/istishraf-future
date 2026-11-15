@@ -433,8 +433,10 @@ def run_serverless_simulation(
 
     # كمية الأفعال لكل جولة: كل وكيل تقريبًا يتفاعل مرة في الجولة، بسقف
     # معقول يحافظ على جودة النصّ العربي داخل حدّ الرموز.
-    per_round_target = max(8, min(16, len(agent_summary) or 10))
-    per_round_min = max(5, per_round_target // 2 + 2)
+    # رفع سقف التفاعل: الطلب من صاحب المشروع «أقصى تفاعل ممكن»، فصار الهدف
+    # ضعفَي عدد الوكلاء (بحدّ ١٢–٢٠) بدل ٨–١٦.
+    per_round_target = max(12, min(20, (len(agent_summary) or 10) * 2))
+    per_round_min = max(8, per_round_target // 2 + 3)
 
     json_spec = (
         '{"rounds": [{"round": 1, "actions": [{"agent_id": 0, "platform": "'
@@ -541,7 +543,7 @@ def run_serverless_simulation(
                             "role": "user",
                             "content": (
                                 f"{prompt}\n\nالمنشورات الجاهزة للتعليق:\n" + "\n".join(listing[:24])
-                                + f"\n\nاكتب من 8 إلى 12 تعليقًا قصيرًا مختلفًا على هذه المنشورات، "
+                                + f"\n\nاكتب من 14 إلى 20 تعليقًا قصيرًا مختلفًا على هذه المنشورات، "
                                 "بأصوات وكلاء مختلفين، وبلهجة منصّتهم.\n"
                                 'أعد JSON فقط: {"comments": [{"platform": "' + platforms[0]
                                 + '", "post_id": 1, "agent_id": 0, "content": "...", "likes": 6}]}'
@@ -553,7 +555,7 @@ def run_serverless_simulation(
                 comments = resp.get("comments") if isinstance(resp, dict) else None
                 if isinstance(comments, list):
                     last_round = rounds_data[-1]
-                    for c in comments[:14]:
+                    for c in comments[:20]:
                         if not isinstance(c, dict):
                             continue
                         text = str(c.get("content") or "").strip()
