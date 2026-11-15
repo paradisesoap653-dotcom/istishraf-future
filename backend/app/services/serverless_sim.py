@@ -111,6 +111,7 @@ def write_simulation_artifacts(
         conn = sqlite3.connect(db_path)
         cur = conn.cursor()
         post_counter = 0
+        plat_posts: List[int] = []  # معرّفات المنشورات في هذه المنصّة بالترتيب
 
         with open(actions_path, "w", encoding="utf-8") as af:
             af.write(
@@ -154,7 +155,12 @@ def write_simulation_artifacts(
                         continue
 
                     if action_type == "CREATE_COMMENT" and post_counter > 0:
-                        target_post = max(1, post_counter)
+                        # التعليق يذهب للمنشور المطلوب داخل المنصّة نفسها
+                        wanted = int(act.get("post_id") or 0)
+                        if wanted > 0 and wanted <= len(plat_posts):
+                            target_post = plat_posts[wanted - 1]
+                        else:
+                            target_post = plat_posts[-1] if plat_posts else max(1, post_counter)
                         cur.execute(
                             "INSERT INTO comment (post_id, user_id, content, created_at, num_likes) VALUES (?, ?, ?, ?, ?)",
                             (target_post, agent_id, content, r_time, int(act.get("likes", 4))),
@@ -167,6 +173,7 @@ def write_simulation_artifacts(
                             (agent_id, content, r_time, int(act.get("likes", 9)), int(act.get("shares", 3))),
                         )
                         post_counter = cur.lastrowid or (post_counter + 1)
+                        plat_posts.append(post_counter)
                         action_args = {"post_id": post_counter, "content": content}
 
                     cur.execute(
@@ -255,6 +262,66 @@ def _clamp_platforms(rounds_data: List[Dict[str, Any]],
     return rounds_data
 
 
+def max_sim_rounds() -> int:
+    """أقصى عدد جولات يسمح به المحرّك (قابل للتغيير بمتغيّر بيئة)."""
+    try:
+        return max(1, int(getattr(Config, "OASIS_MAX_SIM_ROUNDS", 12) or 12))
+    except (TypeError, ValueError):
+        return 12
+
+
+def _clean_rounds(raw: Any) -> List[Dict[str, Any]]:
+    """يُنقّي ما يعيده النموذج: كائنات فقط، ولكل فعل محتوى غير فارغ."""
+    if not isinstance(raw, list):
+        return []
+    cleaned: List[Dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        actions = []
+        for act in (item.get("actions") or []):
+            if not isinstance(act, dict):
+                continue
+            if not str(act.get("content") or "").strip():
+                continue
+            actions.append(act)
+        if actions:
+            cleaned.append({**item, "actions": actions})
+    return cleaned
+
+
+def _context_digest(rounds_data: List[Dict[str, Any]], limit: int = 10) -> str:
+    """ملخّص قصير لما جرى في الجولات السابقة لتبقى المحاكاة متصلة السياق."""
+    lines: List[str] = []
+    for r_item in rounds_data[-2:]:
+        for act in (r_item.get("actions") or [])[-limit:]:
+            who = act.get("agent_name") or act.get("agent_id")
+            text = str(act.get("content") or "").strip().replace("\n", " ")
+            if text:
+                lines.append(f"- [{act.get('platform')}] {who}: {text[:120]}")
+    if not lines:
+        return ""
+    return "آخر ما جرى في المحاكاة:\n" + "\n".join(lines[-limit:])
+
+
+def _posts_by_platform(rounds_data: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """يجمع المنشورات المنشأة حتى الآن (مرقّمة داخل كل منصّة) لتعليق عليها."""
+    posts: Dict[str, List[Dict[str, Any]]] = {}
+    for r_item in rounds_data:
+        for act in (r_item.get("actions") or []):
+            if str(act.get("action_type") or "CREATE_POST").upper() == "CREATE_COMMENT":
+                continue
+            plat = str(act.get("platform") or "").strip().lower()
+            posts.setdefault(plat, []).append(
+                {
+                    "post_id": len(posts.get(plat, [])) + 1,
+                    "agent_name": act.get("agent_name") or act.get("agent_id"),
+                    "content": str(act.get("content") or "")[:100],
+                }
+            )
+    return posts
+
+
 def run_serverless_simulation(
     sim_dir: str,
     platform: str = "parallel",
@@ -284,11 +351,25 @@ def run_serverless_simulation(
                 }
             )
 
-    rounds = max(1, min(int(max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS), 5))
+    # عدد الجولات: طلب المستخدم، وإلا توصية إعدادات المحاكاة، وإلا الافتراضي.
+    # السقف القديم (5) كان يبتلع طلب المستخدم ويُبقي التفاعل ضئيلًا.
+    recommended = 0
+    try:
+        time_cfg = sim_config.get("time_config") or {}
+        hours = float(time_cfg.get("total_simulation_hours") or 0)
+        minutes = float(time_cfg.get("minutes_per_round") or 0)
+        if hours > 0 and minutes > 0:
+            recommended = int(hours * 60 / minutes)
+    except (TypeError, ValueError):
+        recommended = 0
+    requested = int(max_rounds or recommended or Config.OASIS_DEFAULT_MAX_ROUNDS)
+    rounds = max(1, min(requested, max_sim_rounds()))
     platforms = platform_registry.normalize(platform)
 
     # سقف الوكلاء المشاركين في الجولة: كان 12، والمطلوب توزيعهم على أربع
     # منصّات، فنرفعه إلى 16 ونضيف لكل وكيل منصّته الأساسية.
+    # سقف الوكلاء: كان 16. جمهور المحاكاة يحتاج تنوّعًا أوسع (سائق، تاجر،
+    # موظف، طالب، أمّ، نازح…) ليصير التفاعل كثيفًا وليس مجرد بضعة أصوات.
     agent_summary = [
         {
             "agent_id": int(p.get("user_id", idx)),
@@ -297,7 +378,7 @@ def run_serverless_simulation(
             "persona": (p.get("persona") or "")[:160],
             "primary_platform": platform_registry.preferred_for(idx, platforms),
         }
-        for idx, p in enumerate(profiles[:16])
+        for idx, p in enumerate(profiles[:40])
     ]
     # أرقام المستخدم الحقيقية (إن أدخلها) توزّع الأفعال بحسب حجم جمهوره فعلاً
     user_inputs = platform_inputs.load(os.path.basename(os.path.abspath(sim_dir)))
@@ -332,42 +413,139 @@ def run_serverless_simulation(
         pass
 
     llm = LLMClient()
-    prompt = (
-        "أنت محرك محاكاة اجتماعية متعدد الوكلاء في منصة «استشراف المستقبل».\n"
-        f"موضوع الاستشراف: {requirement}\n"
-        f"السياق السردي: {narrative}\n"
-        f"المنشورات الافتتاحية: {json.dumps(initial_posts, ensure_ascii=False)}\n"
-        f"قائمة الوكلاء المتاحين: {json.dumps(agent_summary, ensure_ascii=False)}\n\n"
-        f"{platform_header}"
-        f"قم بمحاكاة {rounds} جولات زمنية متتالية من النقاش الواقعي والمتنوع (تأييد، تحفظ، أرقام، مقترحات عملية) "
-        "بين هؤلاء الوكلاء باللغة المناسبة للسياق (العربية افتراضياً). في كل جولة أدرج 4 إلى 8 تفاعلات متنوعة بين "
-        "CREATE_POST و CREATE_COMMENT.\n"
-        "قواعد المنصّات (مهمة):\n"
-        f"- الحقل platform يأخذ قيمة واحدة فقط من: {', '.join(platforms)}. لا تخترع منصّة أخرى.\n"
-        "- في كل جولة استخدم منصّتين مختلفتين على الأقل، ولا تحشر كل الأفعال في منصّة واحدة.\n"
-        "- احترم طبيعة المنصّة في شكل المحتوى: رسالة واتساب قصيرة داخل مجموعة، "
-        "تيك توك وصف قصير لفيديو مع تعليقات، فيسبوك منشور/تعليق، تويتر تغريدة/رد.\n"
-        "- المحتوى العربي فقط (يجوز أسماء الأعلام والأرقام).\n\n"
-        "أعد النتيجة بصيغة JSON فقط بهذا الهيكل الدقيق:\n"
-        '{"rounds": [{"round": 1, "actions": [{"agent_id": 0, "platform": "' + platforms[0] + '", "action_type": "CREATE_POST", "content": "...", "likes": 18, "shares": 5}]}]}'
+
+    # كمية الأفعال لكل جولة: كل وكيل تقريبًا يتفاعل مرة في الجولة، بسقف
+    # معقول يحافظ على جودة النصّ العربي داخل حدّ الرموز.
+    per_round_target = max(8, min(16, len(agent_summary) or 10))
+    per_round_min = max(5, per_round_target // 2 + 2)
+
+    json_spec = (
+        '{"rounds": [{"round": 1, "actions": [{"agent_id": 0, "platform": "'
+        + platforms[0]
+        + '", "action_type": "CREATE_POST", "content": "...", "likes": 18, "shares": 5}]}]}'
     )
 
-    resp = llm.chat_json(
-        messages=[
-            {"role": "system", "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة متعددة الوكلاء."},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.7,
-    )
-    rounds_data = resp.get("rounds") if isinstance(resp, dict) else None
-    if not rounds_data or not isinstance(rounds_data, list):
+    def _batch_prompt(start_round: int, count: int, digest: str) -> str:
+        span = (
+            f"الدفعة الحالية: الجولة {start_round} فقط."
+            if count == 1
+            else f"الدفعة الحالية: الجولات من {start_round} إلى {start_round + count - 1}."
+        )
+        return (
+            f"{prompt}\n\n{span}\n"
+            + (f"{digest}\n\n" if digest else "")
+            + f"في كل جولة أدرج {per_round_min} إلى {per_round_target} تفاعلًا مختلفًا بين الوكلاء "
+            "(CREATE_POST منشور جديد، CREATE_COMMENT تعليق على منشور سبق في نفس المنصّة).\n"
+            "أعطِ لكل تفاعل أرقام تفاعل واقعية (likes و shares) تناسب المنصّة والموضوع.\n"
+            "نوّع الوكلاء: لا تجعل الوكيل نفسه يتكلم أكثر من مرتين في الجولة، وأشرك على الأقل "
+            "خمسة وكلاء مختلفين في كل جولة.\n"
+            f"أعد JSON فقط بهذا الهيكل: {json_spec}"
+        )
+
+    rounds_data: List[Dict[str, Any]] = []
+    next_round = 1
+    batch_size = 2
+    while next_round <= rounds:
+        chunk = min(batch_size, rounds - next_round + 1)
+        part: Any = None
+        try:
+            resp = llm.chat_json(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة متعددة الوكلاء.",
+                    },
+                    {"role": "user", "content": _batch_prompt(next_round, chunk, _context_digest(rounds_data))},
+                ],
+                temperature=0.75,
+            )
+            if isinstance(resp, dict):
+                part = resp.get("rounds")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"تعذر توليد الجولات {next_round}-{next_round + chunk - 1}: {exc}")
+
+        valid = _clean_rounds(part)
+        if not valid:
+            if rounds_data:
+                # أكملنا جزءًا من المحاكاة: نكتفي بما لدينا بدل إسقاط كل شيء
+                logger.warning("توقّف توليد الجولات مبكرًا؛ يُحتفظ بالمولَّد")
+            break
+        for offset, item in enumerate(valid):
+            item["round"] = next_round + offset
+            for act in item["actions"]:
+                agent_id = int(act.get("agent_id", 0) or 0)
+                if 0 <= agent_id < len(agent_summary):
+                    act.setdefault("agent_name", agent_summary[agent_id]["name"])
+        rounds_data.extend(valid)
+        next_round += len(valid)
+
+    # طبقة التفاعل العميق: تعليقات على المنشورات الأكثر جذبًا، فالتفاعل ليس
+    # منشورات متفرقة فقط بل محادثات حقيقية تحت المنشور.
+    try:
+        posts_index = _posts_by_platform(rounds_data)
+        if posts_index and rounds_data:
+            listing = []
+            for plat, plist in posts_index.items():
+                for post in plist[:8]:
+                    listing.append(
+                        f"- المنصّة {plat} · منشور رقم {post['post_id']} لـ{post['agent_name']}: {post['content']}"
+                    )
+            if listing:
+                resp = llm.chat_json(
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "أجب بـ JSON صالح فقط يمثّل تعليقات واقعية على منشورات.",
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{prompt}\n\nالمنشورات الجاهزة للتعليق:\n" + "\n".join(listing[:24])
+                                + f"\n\nاكتب من 8 إلى 12 تعليقًا قصيرًا مختلفًا على هذه المنشورات، "
+                                "بأصوات وكلاء مختلفين، وبلهجة منصّتهم.\n"
+                                'أعد JSON فقط: {"comments": [{"platform": "' + platforms[0]
+                                + '", "post_id": 1, "agent_id": 0, "content": "...", "likes": 6}]}'
+                            ),
+                        },
+                    ],
+                    temperature=0.8,
+                )
+                comments = resp.get("comments") if isinstance(resp, dict) else None
+                if isinstance(comments, list):
+                    last_round = rounds_data[-1]
+                    for c in comments[:14]:
+                        if not isinstance(c, dict):
+                            continue
+                        text = str(c.get("content") or "").strip()
+                        plat = str(c.get("platform") or "").strip().lower()
+                        if not text or plat not in platforms:
+                            continue
+                        agent_id = int(c.get("agent_id", 0) or 0)
+                        if not (0 <= agent_id < len(agent_summary)):
+                            continue
+                        last_round["actions"].append(
+                            {
+                                "agent_id": agent_id,
+                                "platform": plat,
+                                "action_type": "CREATE_COMMENT",
+                                "post_id": int(c.get("post_id") or 0) or None,
+                                "content": text,
+                                "likes": int(c.get("likes") or 5),
+                                "shares": 0,
+                            }
+                        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"تعذر توليد طبقة التعليقات: {exc}")
+
+    # احتياط أخير: لم يولّد النموذج شيئًا صالحًا → منشور واحد يمنع فشل المحاكاة
+    if not rounds_data:
         rounds_data = [
             {
                 "round": 1,
                 "actions": [
                     {
                         "agent_id": int(agent_summary[0]["agent_id"]) if agent_summary else 0,
-                        "platform": "both",
+                        "platform": platforms[0],
                         "action_type": "CREATE_POST",
                         "content": requirement or "بدء النقاش التحليلي حول السيناريو المطروح.",
                         "likes": 15,
@@ -377,32 +555,6 @@ def run_serverless_simulation(
             }
         ]
 
-    # النموذج قد يعيد عناصر غير صالحة (نصوصًا بدل كائنات) فيسقط المحرّك؛
-    # ننقّي الجولات والأفعال قبل الكتابة.
-    clean_rounds: List[Dict[str, Any]] = []
-    for r_item in rounds_data:
-        if not isinstance(r_item, dict):
-            continue
-        actions = [a for a in (r_item.get("actions") or []) if isinstance(a, dict)]
-        if actions:
-            clean_rounds.append({**r_item, "actions": actions})
-    if not clean_rounds:
-        clean_rounds = [
-            {
-                "round": 1,
-                "actions": [
-                    {
-                        "agent_id": int(agent_summary[0]["agent_id"]) if agent_summary else 0,
-                        "platform": "both",
-                        "action_type": "CREATE_POST",
-                        "content": requirement or "بدء النقاش التحليلي حول السيناريو المطروح.",
-                        "likes": 15,
-                        "shares": 4,
-                    }
-                ],
-            }
-        ]
-    rounds_data = clean_rounds
     rounds_data = _clamp_platforms(rounds_data, platforms)
 
     counts = write_simulation_artifacts(sim_dir, profiles, rounds_data, platforms)

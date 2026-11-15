@@ -76,7 +76,9 @@ class Config:
     DEFAULT_CHUNK_OVERLAP = 50  # 默认重叠大小
     
     # OASIS模拟配置
-    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '3' if _IS_SERVERLESS else '10'))
+    OASIS_DEFAULT_MAX_ROUNDS = int(os.environ.get('OASIS_DEFAULT_MAX_ROUNDS', '8' if _IS_SERVERLESS else '10'))
+    # أقصى عدد جولات يسمح به محرّك المحاكاة السحابي (يحدّد سقف التفاعل)
+    OASIS_MAX_SIM_ROUNDS = int(os.environ.get('OASIS_MAX_SIM_ROUNDS', '12'))
     OASIS_SIMULATION_DATA_DIR = os.path.join(UPLOAD_FOLDER, 'simulations')
     
     # OASIS平台可用动作配置
