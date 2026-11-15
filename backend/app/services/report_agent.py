@@ -1911,54 +1911,29 @@ class ReportAgent:
             ],
         )
 
-    def _build_grounding_context(self, max_chars: int = 2600) -> str:
-        """يجمع معطيات التقرير محليًا (الشبكة + أحداث المحاكاة) بدل أدوات النموذج.
+    def _build_grounding_context(self, max_chars: int = 7000) -> str:
+        """يجمع معطيات التقرير محليًا (بحث الويب + المنصّات + الشبكة + الشارع).
 
-        الهدف: توليد الأقسام بدون أي أداة، لأن بعض النماذج المجانية ترفض
-        إخراج نداء أدوات غير معرّفة وتفشل الطلب بالكامل.
+        الترتيب مقصود: وقائع الموضوع أولًا ثم تفاعلات المنصّات الحقيقية، لأن
+        النسخة السابقة كانت تقصّ السياق عند ٢٦٠٠ حرف فتُبتلع هذه الأجزاء
+        ويخرج التقرير عامًا بلا منصّات ولا مصادر ولا طبقات اجتماعية.
         """
-        parts: List[str] = []
+        from . import platform_inputs as platform_inputs_mod
+        from . import platforms as platform_registry
+
+        head: List[str] = []      # الأهم: الموضوع والوقائع والمنصّات
+        tail: List[str] = []      # الشبكة والثقافة: تُقصّ أولًا عند الضيق
 
         try:
-            graph = storage.read_json_fresh(f"graphs/{self.graph_id}.json") or {}
-            nodes = graph.get("nodes") or []
-            edges = graph.get("edges") or []
-            node_lines = []
-            for node in nodes[:12]:
-                name = node.get("name") or node.get("uuid")
-                summary = (node.get("summary") or "").strip().replace("\n", " ")
-                node_lines.append(f"- {name}: {summary[:120]}")
-            edge_lines = []
-            for edge in edges[:12]:
-                fact = (edge.get("fact") or "").strip().replace("\n", " ")
-                if fact:
-                    edge_lines.append(f"- {fact[:110]}")
-            if node_lines:
-                parts.append("الكيانات الأساسية في الشبكة:\n" + "\n".join(node_lines))
-            if edge_lines:
-                parts.append("علاقات ووقائع محورية:\n" + "\n".join(edge_lines))
+            user_inputs = platform_inputs_mod.load(self.simulation_id)
+            inputs_line = platform_inputs_mod.summary_line(user_inputs, platform_registry.ORDER)
+            if inputs_line:
+                head.append(
+                    "أرقام قدّمها صاحب المشروع بنفسه (تُعامل كمدخل، وتُذكر كمدخل في "
+                    "قسم الافتراضات):\n" + inputs_line
+                )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("تعذر قراءة الشبكة لبناء السياق: %s", exc)
-
-        try:
-            state = storage.read_json_fresh(f"simulations/{self.simulation_id}/state.json") or {}
-            summary_bits = []
-            for key in ("status", "entities_count", "profiles_count", "current_round", "total_rounds"):
-                if state.get(key) not in (None, "", []):
-                    summary_bits.append(f"{key}={state.get(key)}")
-            if summary_bits:
-                parts.append("حالة المحاكاة: " + ", ".join(summary_bits))
-        except Exception:  # noqa: BLE001
-            pass
-
-        try:
-            from . import sudanese_culture
-
-            parts.append(sudanese_culture.report_block())
-            # طبقات الشارع وخيوط الحياة اليومية: تجعل التحليل عن ناس حقيقيين
-            parts.append(sudanese_culture.street_block())
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("تعذر إدراج السياق الثقافي في التقرير: %s", exc)
+            logger.warning("تعذر قراءة أرقام المنصّات للتقرير: %s", exc)
 
         # وقائع بحث الويب عن الموضوع (أي موضوع: سوداني أو عالمي)
         try:
@@ -1970,35 +1945,23 @@ class ReportAgent:
             bundle = web_research.load(sim_dir)
             if not bundle:
                 bundle = web_research.load(f"simulations/{self.simulation_id}")
-            block = web_research.prompt_block(bundle, max_facts=6)
+            block = web_research.prompt_block(bundle, max_facts=8)
             if block:
-                parts.append(block)
+                head.append(block)
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر إدراج وقائع بحث الويب في التقرير: %s", exc)
 
-        from . import platform_inputs as platform_inputs_mod
-        from . import platforms as platform_registry
-
-        try:
-            user_inputs = platform_inputs_mod.load(self.simulation_id)
-            inputs_line = platform_inputs_mod.summary_line(user_inputs, platform_registry.ORDER)
-            if inputs_line:
-                parts.append(
-                    "أرقام قدّمها صاحب المشروع بنفسه (تُعامل كمدخل، وتُذكر كمدخل في "
-                    "قسم الافتراضات):\n" + inputs_line
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("تعذر قراءة أرقام المنصّات للتقرير: %s", exc)
-
+        # تفاعلات كل منصّة على حدة: أرقام حقيقية ونصوص حقيقية
         for platform in platform_registry.ORDER:
             try:
-                raw = storage.read_text(f"simulations/{self.simulation_id}/{platform}/actions.jsonl") or ""
+                raw = storage.read_text_fresh(
+                    f"simulations/{self.simulation_id}/{platform}/actions.jsonl"
+                ) or ""
                 lines = [ln for ln in raw.splitlines() if ln.strip()]
                 if not lines:
                     continue
-                sample = lines[-6:]
-                texts = []
-                for line in sample:
+                texts: List[str] = []
+                for line in lines[-8:]:
                     try:
                         item = json.loads(line)
                     except json.JSONDecodeError:
@@ -2010,13 +1973,58 @@ class ReportAgent:
                     if text:
                         texts.append(f"- {item.get('agent_name') or item.get('user') or 'عضو'}: {text[:130]}")
                 if texts:
-                    parts.append(
+                    head.append(
                         f"نماذج من تفاعلات {platform_registry.label(platform)}"
                         f" ({len(lines)} حدثًا):\n" + "\n".join(texts)
                     )
             except Exception:  # noqa: BLE001
                 continue
 
+        try:
+            graph = storage.read_json_fresh(f"graphs/{self.graph_id}.json") or {}
+            nodes = graph.get("nodes") or []
+            edges = graph.get("edges") or []
+            node_lines = []
+            for node in nodes[:10]:
+                name = node.get("name") or node.get("uuid")
+                summary = (node.get("summary") or "").strip().replace("\n", " ")
+                node_lines.append(f"- {name}: {summary[:110]}")
+            edge_lines = []
+            for edge in edges[:10]:
+                fact = (edge.get("fact") or "").strip().replace("\n", " ")
+                if fact:
+                    edge_lines.append(f"- {fact[:100]}")
+            if node_lines:
+                tail.append("الكيانات الأساسية في الشبكة:\n" + "\n".join(node_lines))
+            if edge_lines:
+                tail.append("علاقات ووقائع محورية:\n" + "\n".join(edge_lines))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر قراءة الشبكة لبناء السياق: %s", exc)
+
+        try:
+            state = storage.read_json_fresh(f"simulations/{self.simulation_id}/state.json") or {}
+            summary_bits = []
+            for key in ("status", "entities_count", "profiles_count", "current_round", "total_rounds"):
+                if state.get(key) not in (None, "", []):
+                    summary_bits.append(f"{key}={state.get(key)}")
+            if summary_bits:
+                tail.append("حالة المحاكاة: " + ", ".join(summary_bits))
+        except Exception:  # noqa: BLE001
+            pass
+
+        try:
+            from . import sudanese_culture
+
+            street = sudanese_culture.street_block()
+            if street:
+                tail.append(street[:2200])
+            culture = sudanese_culture.report_block()
+            if culture:
+                tail.append(culture)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر إدراج السياق الثقافي في التقرير: %s", exc)
+
+        parts = head + tail
         context = "\n\n".join(parts).strip()
         return context[:max_chars]
 
@@ -2038,6 +2046,11 @@ class ReportAgent:
             "أنت كاتب تقارير استراتيجية عربية. تكتب قسمًا واحدًا من تقرير توقعات "
             "مبني على محاكاة ذكاء اصطناعي. اكتب بعربية فصحى واضحة، بنثر مترابط، "
             "مع عناوين فرعية قصيرة عند الحاجة، واستند فقط إلى المعطيات المرفقة. "
+            "قواعد ملزمة: اذكر المنصّات بأسمائها العربية كما وردت (فيسبوك، واتساب، "
+            "تيك توك، تويتر، ريديت) وأشر إلى حجم التفاعل عليها حين تتوفّر المعطيات؛ "
+            "إذا أفدت من وقائع بحث الويب فاذكر المصدر والتاريخ المرفقين معها بلا "
+            "اختلاق؛ ميّز بين ما هو رقم مقدَّم من صاحب المشروع وما هو نتيجة محاكاة؛ "
+            "لا تخترع أي رقم غير موجود في المعطيات، وقل «لم تُقدَّم بيانات» عند الغياب. "
             "لا تذكر أنك نموذج لغوي، ولا تنادِ أي أدوات، ولا تكتب تعليمات برمجية."
         )
 
@@ -2049,7 +2062,14 @@ class ReportAgent:
             f"القسم المطلوب ({section_index}/{len(outline.sections)}): {section.title}\n"
             f"وصف القسم: {section.description}\n\n"
             + (f"ملخص ما كتبته في الأقسام السابقة:\n{previous_text}\n\n" if previous_text else "")
-            + "اكتب الآن محتوى هذا القسم فقط، من 250 إلى 450 كلمة، دون تكرار عنوان القسم."
+            + (
+                "اكتب الآن محتوى هذا القسم فقط، من 300 إلى 500 كلمة، دون تكرار عنوان القسم. "
+                "غطِّ — بقدر ما يسمح الموضوع — طبقات مختلفة من الناس (سائق ركشة أو توك توك، "
+                "عامل يومي، تاجر أو صاحب متجر، موظف، معلم، طبيب، طالب، أمّ، نازح، مغترب)، "
+                "وأشر إلى ما يعيشه الشارع الآن (السيولة النقدية وتقطّعات التطبيقات، الوقود، "
+                "الرسوم والجمارك، ارتفاع الأسعار) متى كان ذلك صلة بالموضوع. "
+                "إن كان الموضوع غير سوداني فالتزم بسياقه هو ولا تُسقط عليه الشارع السوداني."
+            )
         )
 
         content = self.llm.chat(
