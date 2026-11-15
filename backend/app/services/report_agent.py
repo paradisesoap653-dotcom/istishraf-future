@@ -1955,8 +1955,26 @@ class ReportAgent:
             from . import sudanese_culture
 
             parts.append(sudanese_culture.report_block())
+            # طبقات الشارع وخيوط الحياة اليومية: تجعل التحليل عن ناس حقيقيين
+            parts.append(sudanese_culture.street_block())
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر إدراج السياق الثقافي في التقرير: %s", exc)
+
+        # وقائع بحث الويب عن الموضوع (أي موضوع: سوداني أو عالمي)
+        try:
+            from . import web_research
+
+            from ..config import Config
+
+            sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, self.simulation_id)
+            bundle = web_research.load(sim_dir)
+            if not bundle:
+                bundle = web_research.load(f"simulations/{self.simulation_id}")
+            block = web_research.prompt_block(bundle, max_facts=6)
+            if block:
+                parts.append(block)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر إدراج وقائع بحث الويب في التقرير: %s", exc)
 
         from . import platform_inputs as platform_inputs_mod
         from . import platforms as platform_registry

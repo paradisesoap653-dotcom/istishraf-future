@@ -146,19 +146,25 @@ class SimulationRunState:
     simulated_hours: int = 0
     total_simulation_hours: int = 0
     
-    # 各平台独立轮次和模拟时间（用于双平台并行显示）
+    # المنصّات التي شُغّلت فعليًا في هذه المحاكاة (فيسبوك/واتساب/تيك توك/تويتر...)
+    # كان المحرّك يعدّ كل ما ليس تويتر على أنه «ريديت»، فظهرت الواجهة بمنصّتين
+    # فقط. الآن كل منصّة تُعدّ وتُعرض باسمها.
+    platforms: List[str] = field(default_factory=list)
+    platform_rounds: Dict[str, int] = field(default_factory=dict)
+    platform_hours: Dict[str, int] = field(default_factory=dict)
+    platform_running: Dict[str, bool] = field(default_factory=dict)
+    platform_completed: Dict[str, bool] = field(default_factory=dict)
+    platform_actions: Dict[str, int] = field(default_factory=dict)
+
+    # حقول قديمة (توافق خلفي فقط — لم تعد المصدر)
     twitter_current_round: int = 0
     reddit_current_round: int = 0
     twitter_simulated_hours: int = 0
     reddit_simulated_hours: int = 0
-    
-    # 平台状态
     twitter_running: bool = False
     reddit_running: bool = False
     twitter_actions_count: int = 0
     reddit_actions_count: int = 0
-    
-    # 平台完成状态（通过检测 actions.jsonl 中的 simulation_end 事件）
     twitter_completed: bool = False
     reddit_completed: bool = False
     
@@ -186,14 +192,70 @@ class SimulationRunState:
         if len(self.recent_actions) > self.max_recent_actions:
             self.recent_actions = self.recent_actions[:self.max_recent_actions]
         
-        if action.platform == "twitter":
-            self.twitter_actions_count += 1
-        else:
-            self.reddit_actions_count += 1
-        
+        plat = (action.platform or 'facebook').strip().lower()
+        self.platform_actions[plat] = self.platform_actions.get(plat, 0) + 1
+        if plat not in self.platforms:
+            self.platforms.append(plat)
+        # إبقاء العدّادات القديمة متّسقة (تُقرأ في مسارات قديمة)
+        if plat == "twitter":
+            self.twitter_actions_count = self.platform_actions[plat]
+        elif plat == "reddit":
+            self.reddit_actions_count = self.platform_actions[plat]
+
         self.updated_at = datetime.now().isoformat()
+
+    # ===== عدّادات لكل منصّة =====
+
+    def platform_names(self) -> List[str]:
+        """أسماء المنصّات التي لها أي نشاط، بترتيب ثابت ومقروء."""
+        from . import platforms as _pr
+        found: List[str] = []
+        for src in (self.platforms, self.platform_rounds, self.platform_actions,
+                    self.platform_completed, self.platform_running):
+            for key in (src or []):
+                if key and key not in found:
+                    found.append(key)
+        if not found:
+            for legacy_key, vals in (
+                ('twitter', (self.twitter_actions_count, self.twitter_current_round,
+                             self.twitter_running, self.twitter_completed)),
+                ('reddit', (self.reddit_actions_count, self.reddit_current_round,
+                            self.reddit_running, self.reddit_completed)),
+            ):
+                if any(vals):
+                    found.append(legacy_key)
+        ordered = [p for p in _pr.ORDER if p in found]
+        ordered += [p for p in found if p not in ordered]
+        return ordered
+
+    def platform_snapshot(self) -> Dict[str, Dict[str, Any]]:
+        """لقطة لكل منصّة: الجولة والساعات والحالة وعدد الأفعال."""
+        from . import platforms as _pr
+        snap: Dict[str, Dict[str, Any]] = {}
+        for p in self.platform_names():
+            legacy_round = self.twitter_current_round if p == 'twitter' else (
+                self.reddit_current_round if p == 'reddit' else 0)
+            legacy_hours = self.twitter_simulated_hours if p == 'twitter' else (
+                self.reddit_simulated_hours if p == 'reddit' else 0)
+            legacy_running = self.twitter_running if p == 'twitter' else (
+                self.reddit_running if p == 'reddit' else False)
+            legacy_completed = self.twitter_completed if p == 'twitter' else (
+                self.reddit_completed if p == 'reddit' else False)
+            legacy_actions = self.twitter_actions_count if p == 'twitter' else (
+                self.reddit_actions_count if p == 'reddit' else 0)
+            snap[p] = {
+                'platform': p,
+                'label': _pr.label(p),
+                'current_round': self.platform_rounds.get(p, legacy_round),
+                'simulated_hours': self.platform_hours.get(p, legacy_hours),
+                'running': self.platform_running.get(p, legacy_running),
+                'completed': self.platform_completed.get(p, legacy_completed),
+                'actions_count': self.platform_actions.get(p, legacy_actions),
+            }
+        return snap
     
     def to_dict(self) -> Dict[str, Any]:
+        snap = self.platform_snapshot()
         return {
             "simulation_id": self.simulation_id,
             "runner_status": self.runner_status.value,
@@ -202,18 +264,20 @@ class SimulationRunState:
             "simulated_hours": self.simulated_hours,
             "total_simulation_hours": self.total_simulation_hours,
             "progress_percent": round(self.current_round / max(self.total_rounds, 1) * 100, 1),
-            # 各平台独立轮次和时间
-            "twitter_current_round": self.twitter_current_round,
-            "reddit_current_round": self.reddit_current_round,
-            "twitter_simulated_hours": self.twitter_simulated_hours,
-            "reddit_simulated_hours": self.reddit_simulated_hours,
-            "twitter_running": self.twitter_running,
-            "reddit_running": self.reddit_running,
-            "twitter_completed": self.twitter_completed,
-            "reddit_completed": self.reddit_completed,
-            "twitter_actions_count": self.twitter_actions_count,
-            "reddit_actions_count": self.reddit_actions_count,
-            "total_actions_count": self.twitter_actions_count + self.reddit_actions_count,
+            # كل المنصّات التي شاركت فعلًا — الواجهة تبني بطاقة لكل واحدة منها
+            "platforms": self.platform_snapshot(),
+            # حقول قديمة (توافق خلفي): تويتر وريديت فقط
+            "twitter_current_round": snap.get('twitter', {}).get('current_round', self.twitter_current_round),
+            "reddit_current_round": snap.get('reddit', {}).get('current_round', self.reddit_current_round),
+            "twitter_simulated_hours": snap.get('twitter', {}).get('simulated_hours', self.twitter_simulated_hours),
+            "reddit_simulated_hours": snap.get('reddit', {}).get('simulated_hours', self.reddit_simulated_hours),
+            "twitter_running": snap.get('twitter', {}).get('running', self.twitter_running),
+            "reddit_running": snap.get('reddit', {}).get('running', self.reddit_running),
+            "twitter_completed": snap.get('twitter', {}).get('completed', self.twitter_completed),
+            "reddit_completed": snap.get('reddit', {}).get('completed', self.reddit_completed),
+            "twitter_actions_count": snap.get('twitter', {}).get('actions_count', self.twitter_actions_count),
+            "reddit_actions_count": snap.get('reddit', {}).get('actions_count', self.reddit_actions_count),
+            "total_actions_count": sum(v['actions_count'] for v in snap.values()) if snap else (self.twitter_actions_count + self.reddit_actions_count),
             "started_at": self.started_at,
             "updated_at": self.updated_at,
             "completed_at": self.completed_at,
@@ -358,6 +422,22 @@ class SimulationRunner:
                 error=data.get("error"),
                 process_pid=data.get("process_pid"),
             )
+
+            # استعادة لقطة المنصّات إن كانت محفوظة (المنصّات الأربع وغيرها)
+            saved_platforms = data.get("platforms")
+            if isinstance(saved_platforms, dict):
+                for plat_key, info in saved_platforms.items():
+                    if not isinstance(info, dict):
+                        continue
+                    if plat_key not in state.platforms:
+                        state.platforms.append(plat_key)
+                    state.platform_rounds[plat_key] = int(info.get("current_round") or 0)
+                    state.platform_hours[plat_key] = int(info.get("simulated_hours") or 0)
+                    state.platform_running[plat_key] = bool(info.get("running"))
+                    state.platform_completed[plat_key] = bool(info.get("completed"))
+                    state.platform_actions[plat_key] = int(info.get("actions_count") or 0)
+            elif isinstance(saved_platforms, list):
+                state.platforms = [str(x) for x in saved_platforms if x]
             
             # 加载最近动作
             actions_data = data.get("recent_actions", [])
@@ -499,6 +579,11 @@ class SimulationRunner:
             def _exec_lightweight():
                 try:
                     state.runner_status = RunnerStatus.RUNNING
+                    from . import platforms as _pr
+                    for plat_key in _pr.normalize(platform):
+                        if plat_key not in state.platforms:
+                            state.platforms.append(plat_key)
+                        state.platform_running[plat_key] = True
                     state.twitter_running = platform in ("twitter", "parallel")
                     state.reddit_running = platform in ("reddit", "parallel")
                     cls._save_run_state(state)
@@ -515,17 +600,21 @@ class SimulationRunner:
                     state.simulated_hours = done_rounds
                     state.twitter_current_round = done_rounds
                     state.reddit_current_round = done_rounds
-                    # البطاقتان في الواجهة عامّتان (منصّة عامة / مجتمع)؛
-                    # نضع في الأولى ما جرى على المنصّات العامة وفي الثانية
-                    # ما جرى في المجموعات شبه الخاصة، حتى لا تظهر أصفار.
+                    # عدّادات حقيقية لكل منصّة (فيسبوك/واتساب/تيك توك/تويتر...)
                     per_platform = summary.get("platform_actions") or {}
-                    public_keys = ("twitter", "facebook", "tiktok", "reddit")
-                    state.twitter_actions_count = sum(
-                        n for k, n in per_platform.items() if k in public_keys
-                    ) if per_platform else summary.get("twitter_actions", 0)
-                    state.reddit_actions_count = sum(
-                        n for k, n in per_platform.items() if k not in public_keys
-                    ) if per_platform else summary.get("reddit_actions", 0)
+                    used_platforms = summary.get("platforms") or list(per_platform.keys())
+                    for plat_key in used_platforms:
+                        if plat_key not in state.platforms:
+                            state.platforms.append(plat_key)
+                        state.platform_rounds[plat_key] = done_rounds
+                        state.platform_hours[plat_key] = done_rounds
+                        state.platform_actions[plat_key] = int(per_platform.get(plat_key, 0) or 0)
+                        state.platform_running[plat_key] = False
+                        state.platform_completed[plat_key] = True
+                    state.twitter_actions_count = state.platform_actions.get('twitter', 0)
+                    state.reddit_actions_count = state.platform_actions.get('reddit', 0)
+                    # القديمة: الأولى كانت تُظهر «المنصّة العامة» والثانية «المجتمع»؛
+                    # لم نعد نحتاج هذا التجميع لأن كل منصّة تُعرض باسمها.
                     state.total_actions_count = summary.get("total_actions", 0)
                     state.twitter_running = False
                     state.reddit_running = False

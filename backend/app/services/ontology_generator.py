@@ -81,28 +81,30 @@ ONTOLOGY_SYSTEM_PROMPT = """你是一个专业的知识图谱本体设计专家�
     "entity_types": [
         {
             "name": "实体类型名称（英文，PascalCase）",
-            "description": "简短描述（英文，不超过100字符）",
+            "label_ar": "الاسم بالعربية كما يُقرأ للناس (٢-٤ كلمات)",
+            "description": "وصف عربي قصير جدًا (حتى ١٠٠ حرف)",
             "attributes": [
                 {
                     "name": "属性名（英文，snake_case）",
                     "type": "text",
-                    "description": "属性描述"
+                    "description": "وصف عربي قصير"
                 }
             ],
-            "examples": ["示例实体1", "示例实体2"]
+            "examples": ["مثال ١", "مثال ٢"]
         }
     ],
     "edge_types": [
         {
             "name": "关系类型名称（英文，UPPER_SNAKE_CASE）",
-            "description": "简短描述（英文，不超过100字符）",
+            "label_ar": "العلاقة بالعربية (فعل قصير، مثل: يعارض، يعمل لدى)",
+            "description": "وصف عربي قصير جدًا (حتى ١٠٠ حرف)",
             "source_targets": [
                 {"source": "源实体类型", "target": "目标实体类型"}
             ],
             "attributes": []
         }
     ],
-    "analysis_summary": "对文本内容的简要分析说明"
+    "analysis_summary": "تحليل قصير بالعربية: ما الموضوع؟ من الأطراف؟ ما النقاط المشتعلة فيه؟"
 }
 ```
 
@@ -282,6 +284,11 @@ class OntologyGenerator:
         
         message += """
 请根据以上内容，设计适合社会舆论模拟的实体类型和关系类型。
+
+**قواعد اللغة (مهمّة جدًا)**：
+- `name` يبقى إنجليزيًا (مفتاح تقني للمخطط) — لا تترجمه ولا تغيّره.
+- كل وصف و`label_ar` و`analysis_summary` بالعربية الفصحى المبسّطة، لأن المستخدم عربي.
+- `label_ar` قصير وطبيعي كما يقول الناس («قائد سياسي»، «تاجر»، «صفحة إخبارية»)، لا ترجمة حرفية باردة.
 
 **必须遵守的规则**：
 1. 必须正好输出10个实体类型
@@ -481,9 +488,13 @@ class OntologyGenerator:
             )
             if not isinstance(entity.get("examples"), list):
                 entity["examples"] = []
+            label_ar = entity.get("label_ar")
+            entity["label_ar"] = (
+                label_ar.strip()[:40] if isinstance(label_ar, str) and label_ar.strip() else ""
+            )
             description = entity.get("description")
             if not isinstance(description, str) or not description:
-                description = f"A {normalized_name} entity."
+                description = entity["label_ar"] or f"A {normalized_name} entity."
             entity["description"] = (
                 description[:97] + "..." if len(description) > 100 else description
             )
@@ -500,7 +511,8 @@ class OntologyGenerator:
         # 兜底类型定义
         person_fallback = {
             "name": "Person",
-            "description": "Any individual person not fitting other specific person types.",
+            "label_ar": "شخص",
+            "description": "أي شخص بمفرده لا ينتمي إلى نوع أدق.",
             "attributes": [
                 {"name": "full_name", "type": "text", "description": "Full name of the person"},
                 {"name": "role", "type": "text", "description": "Role or occupation"}
@@ -510,7 +522,8 @@ class OntologyGenerator:
         
         organization_fallback = {
             "name": "Organization",
-            "description": "Any organization not fitting other specific organization types.",
+            "label_ar": "منظمة",
+            "description": "أي جهة أو تجمّع لا ينتمي إلى نوع أدق.",
             "attributes": [
                 {"name": "org_name", "type": "text", "description": "Name of the organization"},
                 {"name": "org_type", "type": "text", "description": "Type of organization"}
@@ -608,9 +621,13 @@ class OntologyGenerator:
             edge["attributes"] = normalize_ontology_attributes(
                 edge.get("attributes", [])
             )
+            label_ar = edge.get("label_ar")
+            edge["label_ar"] = (
+                label_ar.strip()[:40] if isinstance(label_ar, str) and label_ar.strip() else ""
+            )
             description = edge.get("description")
             if not isinstance(description, str) or not description:
-                description = f"A {normalized_name} relationship."
+                description = edge["label_ar"] or f"A {normalized_name} relationship."
             edge["description"] = (
                 description[:97] + "..." if len(description) > 100 else description
             )

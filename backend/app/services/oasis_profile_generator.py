@@ -828,14 +828,24 @@ class OasisProfileGenerator:
 - المحتوى متوافق مع معلومات الكيان.
 - age عدد صحيح صالح، و gender إما "male" أو "female".
 - {self._culture_hint()}
+- استخدم هذه الوقائع عن الموضوع نفسه عند بناء موقف الشخصية وذاكرتها (ولا تخترع غيرها):
+{self._research_hint()}
 """
+
+    def _research_hint(self) -> str:
+        """وقائع بحث الويب عن الموضوع (إن وُجدت) — تجعل الشخصية تعرف الموضوع فعلًا."""
+        block = getattr(self, '_research_block', '') or ''
+        if not block:
+            return 'لا توجد وقائع بحث متاحة لهذا الموضوع؛ ابقَ على ما في المستند.'
+        return block
 
     def _culture_hint(self) -> str:
         """توجيه سوداني لبناء الشخصيات (يُهمَل بهدوء إن تعذّر التحميل)."""
         try:
             from . import sudanese_culture
 
-            return sudanese_culture.persona_block()
+            return (sudanese_culture.persona_block()
+                    + '\n' + sudanese_culture.street_persona_block())
         except Exception:  # noqa: BLE001
             return 'اجعل الشخصية واقعية ومتنوعة ولا تُعمّم على قبيلة أو جهة.'
 
@@ -887,6 +897,8 @@ class OasisProfileGenerator:
 - {get_language_instruction()} (حقل gender يبقى بالإنكليزية "other")
 - age عدد صحيح 30، و gender النص "other".
 - خطاب الحساب المؤسسي يجب أن يناسب طبيعته.
+- استخدم هذه الوقائع عن الموضوع نفسه في الموقف الرسمي وذاكرة الهيئة (ولا تخترع غيرها):
+{self._research_hint()}
 """
 
     def _generate_profile_rule_based(
@@ -996,7 +1008,8 @@ class OasisProfileGenerator:
         graph_id: Optional[str] = None,
         parallel_count: int = 5,
         realtime_output_path: Optional[str] = None,
-        output_platform: str = "reddit"
+        output_platform: str = "reddit",
+        research_block: str = ""
     ) -> List[OasisAgentProfile]:
         """
         批量从实体生成Agent Profile（支持并行生成）
@@ -1009,10 +1022,13 @@ class OasisProfileGenerator:
             parallel_count: 并行生成数量，默认5
             realtime_output_path: 实时写入的文件路径（如果提供，每生成一个就写入一次）
             output_platform: 输出平台格式 ("reddit" 或 "twitter")
+            research_block: وقائع بحث الويب عن الموضوع (تُحقن في كل شخصية)
             
         Returns:
             Agent Profile列表
         """
+        # وقائع بحث الويب عن الموضوع — تُقرأ في _research_hint()
+        self._research_block = research_block or ""
         import concurrent.futures
         from threading import Lock
         

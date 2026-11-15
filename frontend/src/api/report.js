@@ -76,6 +76,14 @@ export const runReportScenario = (reportId, payload) => {
 }
 
 /**
+ * اقتراحات تغييرات جاهزة، مشتقّة من موضوع هذا التقرير نفسه.
+ * @param {string} reportId
+ */
+export const getScenarioSuggestions = (reportId) => {
+  return service.get(`/api/report/${reportId}/scenario-suggestions`, { timeout: 60000 })
+}
+
+/**
  * السيناريوهات المحفوظة لهذا التقرير
  * @param {string} reportId
  */

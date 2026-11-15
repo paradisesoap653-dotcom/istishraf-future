@@ -162,7 +162,9 @@ class SimulationParameters:
     # 事件配置
     event_config: EventConfig = field(default_factory=EventConfig)
     
-    # 平台配置
+    # 平台配置: منصّة → إعداداتها (فيسبوك/واتساب/تيك توك/تويتر...)
+    platform_configs: Dict[str, PlatformConfig] = field(default_factory=dict)
+    # حقول قديمة (توافق خلفي)
     twitter_config: Optional[PlatformConfig] = None
     reddit_config: Optional[PlatformConfig] = None
     
@@ -185,6 +187,9 @@ class SimulationParameters:
             "time_config": time_dict,
             "agent_configs": [asdict(a) for a in self.agent_configs],
             "event_config": asdict(self.event_config),
+            "platform_configs": {
+                key: asdict(cfg) for key, cfg in (self.platform_configs or {}).items()
+            },
             "twitter_config": asdict(self.twitter_config) if self.twitter_config else None,
             "reddit_config": asdict(self.reddit_config) if self.reddit_config else None,
             "llm_model": self.llm_model,
@@ -251,6 +256,8 @@ class SimulationConfigGenerator:
         entities: List[EntityNode],
         enable_twitter: bool = True,
         enable_reddit: bool = True,
+        platforms: Optional[List[str]] = None,
+        research_block: str = "",
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> SimulationParameters:
         """
@@ -271,6 +278,21 @@ class SimulationConfigGenerator:
             SimulationParameters: 完整的模拟参数
         """
         logger.info(f"开始智能生成模拟配置: simulation_id={simulation_id}, 实体数={len(entities)}")
+
+        # مجموعة المنصّات: ما يطلبه المستخدم، وإلا الافتراضي السوداني
+        from . import platforms as _platform_registry
+        resolved_platforms = _platform_registry.normalize(platforms) if platforms else None
+        if not resolved_platforms:
+            resolved_platforms = []
+            if enable_twitter:
+                resolved_platforms.append("twitter")
+            if enable_reddit:
+                resolved_platforms.append("reddit")
+            if not resolved_platforms:
+                resolved_platforms = list(_platform_registry.DEFAULT_SET)
+            elif len(resolved_platforms) == 2:
+                # الطلب القديم (تويتر+ريديت) صار يعني «كل المنصّات الافتراضية»
+                resolved_platforms = list(_platform_registry.DEFAULT_SET)
         
         # 计算总步骤数
         num_batches = math.ceil(len(entities) / self.AGENTS_PER_BATCH)
@@ -290,6 +312,9 @@ class SimulationConfigGenerator:
             document_text=document_text,
             entities=entities
         )
+        if research_block:
+            # وقائع الويب تسبق المستند: هي ما يجري في الواقع اليوم عن الموضوع
+            context = "## وقائع الويب عن الموضوع (بحث فعلي)\n" + research_block + "\n\n" + context
         
         reasoning_parts = []
         
@@ -336,28 +361,20 @@ class SimulationConfigGenerator:
         
         # ========== 最后一步: 生成平台配置 ==========
         report_progress(total_steps, t('progress.generatingPlatformConfig'))
-        twitter_config = None
-        reddit_config = None
-        
-        if enable_twitter:
-            twitter_config = PlatformConfig(
-                platform="twitter",
-                recency_weight=0.4,
-                popularity_weight=0.3,
-                relevance_weight=0.3,
-                viral_threshold=10,
-                echo_chamber_strength=0.5
+        platform_configs: Dict[str, PlatformConfig] = {}
+        for plat in resolved_platforms:
+            preset = self._platform_preset(plat)
+            platform_configs[plat] = PlatformConfig(
+                platform=plat,
+                recency_weight=preset["recency_weight"],
+                popularity_weight=preset["popularity_weight"],
+                relevance_weight=preset["relevance_weight"],
+                viral_threshold=preset["viral_threshold"],
+                echo_chamber_strength=preset["echo_chamber_strength"],
             )
-        
-        if enable_reddit:
-            reddit_config = PlatformConfig(
-                platform="reddit",
-                recency_weight=0.3,
-                popularity_weight=0.4,
-                relevance_weight=0.3,
-                viral_threshold=15,
-                echo_chamber_strength=0.6
-            )
+
+        twitter_config = platform_configs.get("twitter")
+        reddit_config = platform_configs.get("reddit")
         
         # 构建最终参数
         params = SimulationParameters(
@@ -368,6 +385,7 @@ class SimulationConfigGenerator:
             time_config=time_config,
             agent_configs=all_agent_configs,
             event_config=event_config,
+            platform_configs=platform_configs,
             twitter_config=twitter_config,
             reddit_config=reddit_config,
             llm_model=self.model_name,
@@ -379,6 +397,25 @@ class SimulationConfigGenerator:
         
         return params
     
+    # إعدادات سلوكية لكل منصّة (ليست قياسًا — مجرد وصْف لطريقة انتشار المحتوى)
+    _PLATFORM_PRESETS = {
+        "facebook": dict(recency_weight=0.25, popularity_weight=0.35, relevance_weight=0.40,
+                         viral_threshold=12, echo_chamber_strength=0.55),
+        "whatsapp": dict(recency_weight=0.20, popularity_weight=0.20, relevance_weight=0.60,
+                         viral_threshold=6, echo_chamber_strength=0.80),
+        "tiktok": dict(recency_weight=0.50, popularity_weight=0.35, relevance_weight=0.15,
+                       viral_threshold=8, echo_chamber_strength=0.45),
+        "twitter": dict(recency_weight=0.40, popularity_weight=0.30, relevance_weight=0.30,
+                        viral_threshold=10, echo_chamber_strength=0.50),
+        "reddit": dict(recency_weight=0.30, popularity_weight=0.40, relevance_weight=0.30,
+                       viral_threshold=15, echo_chamber_strength=0.60),
+    }
+
+    def _platform_preset(self, platform: str) -> Dict[str, float]:
+        base = dict(self._PLATFORM_PRESETS.get("twitter"))
+        base.update(self._PLATFORM_PRESETS.get(platform, {}))
+        return base
+
     def _build_context(
         self,
         simulation_requirement: str,

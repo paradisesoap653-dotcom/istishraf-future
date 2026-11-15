@@ -212,6 +212,8 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 نتائج المحاكاة الأصلية (باختصار):
 {baseline}
 
+{research_block}
+
 المطلوب الآن: **سيناريو بديل** — أعد تشغيل {rounds} جولتين/جولات على نفس هؤلاء الوكلاء،
 مع تطبيق هذا التغيير على الافتراضات:
 «{change}»
@@ -233,7 +235,7 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 - استخدم agent_id من قائمة الوكلاء أعلاه فقط.
 
 أعد JSON فقط بهذا الشكل:
-{{"rounds": [{{"round": 1, "actions": [{{"agent_id": 0, "platform": "twitter", "action_type": "CREATE_POST", "content": "..."}}]}}],
+{{"rounds": [{{"round": 1, "actions": [{{"agent_id": 0, "platform": "{example_platform}", "action_type": "CREATE_POST", "content": "..."}}]}}],
   "analysis": "قراءة تحليلية قصيرة (٣ إلى ٥ أسطر) للفرق بين السيناريو والوضع الأصلي"}}"""
 
 
@@ -244,6 +246,18 @@ def _culture_block(config: Dict[str, Any]) -> str:
 
         requirement = (config or {}).get('simulation_requirement') or ''
         return sudanese_culture.prompt_block(requirement)
+    except Exception:  # noqa: BLE001
+        return ''
+
+
+def _research_block(sim_dir: str) -> str:
+    """وقائع بحث الويب المحفوظة مع المحاكاة — لتظلّ المقارنة على الموضوع نفسه."""
+    try:
+        from . import web_research
+
+        bundle = web_research.load(sim_dir)
+        block = web_research.prompt_block(bundle, max_facts=6)
+        return block
     except Exception:  # noqa: BLE001
         return ''
 
@@ -304,6 +318,8 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
             platform_inputs.load(simulation_id), allowed, rounds * 6
         ) or '',
         culture_block=_culture_block(config),
+        research_block=_research_block(sim_dir),
+        example_platform=(allowed[0] if allowed else 'facebook'),
     )
 
     llm = LLMClient()
@@ -514,3 +530,205 @@ def get_scenario(report_id: str, scenario_id: str) -> Optional[Dict[str, Any]]:
         return data if isinstance(data, dict) else None
     except Exception:  # noqa: BLE001
         return None
+
+
+# ---------------------------------------------------------------- suggestions
+
+_SUGGEST_PROMPT = """أنت مساعد في منصة «استشراف المستقبل».
+
+موضوع الدراسة/التقرير:
+{requirement}
+
+ما يجري فعلًا حول هذا الموضوع (بحث ويب حديث):
+{research}
+
+أهم ما تكلّم عنه الناس في المحاكاة:
+{hot}
+
+اقترح {count} تغييرات افتراضية **تخصّ هذا الموضوع نفسه** بحيث يمكن اختبار أثرها
+بمحاكاة قصيرة على نفس الوكلاء. لكل اقتراح:
+- «change»: جملة واحدة قصيرة (حتى ٩٠ حرفًا) تصف التغيير بدقة، كأنها افتراض قابل للقياس
+  (مثال صحيح لموضوع عمولة: «خفض العمولة من ١٠٪ إلى ٥٪»).
+- «why»: سطر واحد يوضح ما الذي سيتغيّر في سلوك الناس إن طبّقنا هذا الافتراض.
+
+شروط:
+- لا تقترح أشياء عامة لا علاقة لها بالموضوع (مثل «زيادة الوعي» إن كان الموضوع سعرًا).
+- لا تكرّر الاقتراح نفسه بصيغتين.
+- العربية فقط، بلا أي حرف لاتيني إلا الأرقام والرموز.
+
+أعد JSON فقط:
+{{"suggestions": [{{"change": "...", "why": "..."}}]}}"""
+
+
+def _hot_topics(config: Dict[str, Any], bundle: Optional[Dict[str, Any]]) -> str:
+    bits: List[str] = []
+    events = (config.get('event_config') or {})
+    for key in ('hot_topics',):
+        value = events.get(key)
+        if isinstance(value, list) and value:
+            bits.extend(str(v) for v in value[:6])
+    narrative = events.get('narrative_direction')
+    if narrative:
+        bits.append(str(narrative)[:160])
+    if bundle:
+        for fact in ((bundle.get('topic') or {}).get('facts') or [])[:4]:
+            title = (fact.get('title') or '').strip()
+            if title:
+                bits.append(title[:120])
+    return '\n'.join(f'- {b}' for b in bits) or '—'
+
+
+_LEADIN = (
+    'توقعات مستقبلية حول', 'توقعات حول', 'دراسة حول', 'دراسة عن', 'تحليل حول',
+    'محاكاة حول', 'محاكاة عن', 'تأثير', 'قياس', 'استشراف', 'بحث عن', 'بحث حول',
+)
+
+
+def _short_subject(requirement: str) -> str:
+    """يستخرج موضوعًا قصيرًا من نص الطلب بدل نسخ الجملة كلها مقطوعة."""
+    text = (requirement or '').strip().split('\n')[0]
+    for sep in ('。', '.', '؟', '?'):
+        if sep in text:
+            text = text.split(sep)[0]
+    for lead in _LEADIN:
+        if text.startswith(lead):
+            text = text[len(lead):].strip(' :：-—')
+            break
+    words = text.split()
+    short = ' '.join(words[:5]).strip(' «»"')
+    return short[:60] if short else 'الموضوع'
+
+
+def _fallback_suggestions(requirement: str, hot_topics: List[str] | None = None) -> List[Dict[str, str]]:
+    """اقتراحات بديلة عند تعذّر النموذج — من موضوع الدراسة أو من كلمات النقاش نفسها."""
+    topics = [str(t).strip() for t in (hot_topics or []) if str(t).strip()]
+    if topics:
+        first = topics[0][:40]
+        second = (topics[1] if len(topics) > 1 else first)[:40]
+        return [
+            {
+                'change': f'ماذا لو زاد «{first}» بشكل واضح خلال شهر؟',
+                'why': 'نرى هل يتحوّل النقاش إلى غضب أم يبقى شكوى متفرقة.',
+            },
+            {
+                'change': f'ماذا لو خفّ «{second}» بعد قرار أو حملة رسمية؟',
+                'why': 'نرى هل يهدأ الناس أم يظهر شكّ في جدّية القرار.',
+            },
+            {
+                'change': f'ماذا لو ظهر عامل جديد يفاقم «{first}» عند الشباب؟',
+                'why': 'نرى من يحمل العبء الأكبر ومن يتحرّك أولًا.',
+            },
+        ]
+    subject = _short_subject(requirement)
+    return [
+        {
+            'change': f'تشديد في «{subject}»: قيود أو تكلفة أعلى على الناس',
+            'why': 'نرى هل يزيد التحفظ والغضب أم يتكيّف الناس.',
+        },
+        {
+            'change': f'تخفيف في «{subject}»: تسهيل وتكلفة أقل',
+            'why': 'نرى هل يزيد التأييد والاستخدام أم يبقى الشك.',
+        },
+        {
+            'change': f'حملة توعية واسعة حول «{subject}»',
+            'why': 'نرى هل يتغيّر فهم الناس للموضوع وحدّة كلامهم.',
+        },
+    ]
+
+
+def suggest_changes(report_id: str, simulation_id: str, count: int = 3) -> Dict[str, Any]:
+    """اقتراحات تغييرات جاهزة للتجربة، مشتقّة من موضوع التقرير لا من قالب ثابت."""
+    count = max(2, min(int(count or 3), 4))
+    sim_dir = _sim_dir(simulation_id)
+    config: Dict[str, Any] = {}
+    try:
+        raw = storage.read_text(os.path.join(sim_dir, 'simulation_config.json'))
+        if raw:
+            config = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('تعذر قراءة إعدادات المحاكاة للاقتراحات: %s', exc)
+
+    requirement = (config.get('simulation_requirement') or '').strip()
+    if not requirement:
+        try:
+            from .report_agent import ReportManager
+
+            report = ReportManager.get_report(report_id)
+            requirement = (getattr(report, 'simulation_requirement', '') or '').strip()
+        except Exception:  # noqa: BLE001
+            requirement = ''
+
+    bundle = None
+    try:
+        from . import web_research
+
+        bundle = web_research.load(sim_dir)
+    except Exception:  # noqa: BLE001
+        bundle = None
+
+    research_bits = ''
+    if bundle:
+        try:
+            from . import web_research
+
+            research_bits = web_research.prompt_block(bundle, max_facts=5)
+        except Exception:  # noqa: BLE001
+            research_bits = ''
+
+    suggestions: List[Dict[str, str]] = []
+    try:
+        llm = LLMClient()
+        resp = llm.chat_json(
+            messages=[
+                {'role': 'system', 'content': 'أجب بـ JSON صالح فقط.'},
+                {'role': 'user', 'content': _SUGGEST_PROMPT.format(
+                    requirement=requirement or '—',
+                    research=research_bits or 'لا توجد وقائع بحث متاحة.',
+                    hot=_hot_topics(config, bundle),
+                    count=count,
+                )},
+            ],
+            temperature=0.7,
+        )
+        raw_items = (resp or {}).get('suggestions') if isinstance(resp, dict) else None
+        if isinstance(raw_items, list):
+            for item in raw_items:
+                if not isinstance(item, dict):
+                    continue
+                change = str(item.get('change') or '').strip()[:120]
+                if not change:
+                    continue
+                latin = sum(1 for ch in change if ch.isascii() and ch.isalpha())
+                if latin and latin > max(3, len(change) * 0.2):
+                    continue  # اقتراح غير عربي
+                if any(change == existing['change'] for existing in suggestions):
+                    continue
+                suggestions.append({
+                    'change': change,
+                    'why': str(item.get('why') or '').strip()[:160],
+                })
+    except Exception as exc:  # noqa: BLE001
+        logger.warning('تعذر توليد اقتراحات السيناريو: %s', exc)
+
+    hot_list: List[str] = []
+    try:
+        events = (config.get('event_config') or {})
+        if isinstance(events.get('hot_topics'), list):
+            hot_list = [str(x) for x in events['hot_topics'] if str(x).strip()]
+    except Exception:  # noqa: BLE001
+        hot_list = []
+
+    from_model = bool(suggestions)
+    for item in _fallback_suggestions(requirement, hot_list):
+        if len(suggestions) >= count:
+            break
+        if any(item['change'] == existing['change'] for existing in suggestions):
+            continue
+        suggestions.append(item)
+
+    return {
+        'requirement': requirement,
+        'suggestions': suggestions[:count],
+        'from_model': from_model,
+        'research': bool(research_bits),
+    }

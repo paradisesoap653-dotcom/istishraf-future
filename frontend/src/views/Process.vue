@@ -99,7 +99,7 @@
                 <div class="detail-row" v-if="selectedItem.data.labels?.length">
                   <span class="detail-label">Labels:</span>
                   <div class="detail-labels">
-                    <span v-for="label in selectedItem.data.labels" :key="label" class="label-tag">{{ label }}</span>
+                    <span v-for="label in selectedItem.data.labels" :key="label" class="label-tag">{{ entityTypeLabel(label) }}</span>
                   </div>
                 </div>
               </div>
@@ -110,7 +110,7 @@
                 <div class="edge-relation">
                   <span class="edge-source">{{ selectedItem.data.source_name || selectedItem.data.source_node_name }}</span>
                   <span class="edge-arrow">→</span>
-                  <span class="edge-type">{{ selectedItem.data.name || selectedItem.data.fact_type || 'RELATED_TO' }}</span>
+                  <span class="edge-type">{{ relationTypeLabel(selectedItem.data.name || selectedItem.data.fact_type || 'RELATED_TO') }}</span>
                   <span class="edge-arrow">→</span>
                   <span class="edge-target">{{ selectedItem.data.target_name || selectedItem.data.target_node_name }}</span>
                 </div>
@@ -215,7 +215,7 @@
         <div v-if="graphData" class="graph-legend">
           <div class="legend-item" v-for="type in entityTypes" :key="type.name">
             <span class="legend-dot" :style="{ background: type.color }"></span>
-            <span class="legend-label">{{ type.name }}</span>
+            <span class="legend-label">{{ entityTypeLabel(type.name) }}</span>
             <span class="legend-count">{{ type.count }}</span>
           </div>
         </div>
@@ -267,8 +267,9 @@
                     v-for="entity in projectData.ontology.entity_types" 
                     :key="entity.name"
                     class="entity-tag"
+                    :title="entity.name"
                   >
-                    {{ entity.name }}
+                    {{ entityTypeLabel(entity) }}
                   </span>
                 </div>
               </div>
@@ -416,6 +417,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
+import { entityTypeLabel, relationTypeLabel } from '../utils/ontologyLabels'
 import * as d3 from 'd3'
 
 const route = useRoute()

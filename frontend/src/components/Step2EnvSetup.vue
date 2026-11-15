@@ -198,7 +198,7 @@
                       <span class="agent-name">{{ agent.entity_name }}</span>
                     </div>
                     <div class="agent-tags">
-                      <span class="agent-type">{{ agent.entity_type }}</span>
+                      <span class="agent-type">{{ entityTypeLabel(agent.entity_type) }}</span>
                       <span class="agent-stance" :class="'stance-' + agent.stance">{{ agent.stance }}</span>
                     </div>
                   </div>
@@ -269,60 +269,41 @@
               <div class="config-block-header">
                 <span class="config-block-title">{{ $t('step2.recommendAlgoConfig') }}</span>
               </div>
+              <p v-if="researchSummary" class="research-line">
+                <span class="research-badge">بحث الويب</span>
+                {{ researchSummary }}
+              </p>
               <div class="platforms-grid">
-                <div v-if="simulationConfig.twitter_config" class="platform-card">
+                <div v-for="card in platformCards" :key="card.platform" class="platform-card">
                   <div class="platform-card-header">
-                    <span class="platform-name">{{ $t('step2.platform1Name') }}</span>
+                    <span class="platform-name">
+                      <span class="platform-dot" :style="{ background: card.color }"></span>
+                      {{ card.label }}
+                    </span>
                   </div>
                   <div class="platform-params">
                     <div class="param-row">
                       <span class="param-label">{{ $t('step2.recencyWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.recency_weight }}</span>
+                      <span class="param-value">{{ card.recency_weight }}</span>
                     </div>
                     <div class="param-row">
                       <span class="param-label">{{ $t('step2.popularityWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.popularity_weight }}</span>
+                      <span class="param-value">{{ card.popularity_weight }}</span>
                     </div>
                     <div class="param-row">
                       <span class="param-label">{{ $t('step2.relevanceWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.relevance_weight }}</span>
+                      <span class="param-value">{{ card.relevance_weight }}</span>
                     </div>
                     <div class="param-row">
                       <span class="param-label">{{ $t('step2.viralThreshold') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.viral_threshold }}</span>
+                      <span class="param-value">{{ card.viral_threshold }}</span>
                     </div>
                     <div class="param-row">
                       <span class="param-label">{{ $t('step2.echoChamberStrength') }}</span>
-                      <span class="param-value">{{ simulationConfig.twitter_config.echo_chamber_strength }}</span>
+                      <span class="param-value">{{ card.echo_chamber_strength }}</span>
                     </div>
                   </div>
-                </div>
-                <div v-if="simulationConfig.reddit_config" class="platform-card">
-                  <div class="platform-card-header">
-                    <span class="platform-name">{{ $t('step2.platform2Name') }}</span>
-                  </div>
-                  <div class="platform-params">
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.recencyWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.recency_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.popularityWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.popularity_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.relevanceWeight') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.relevance_weight }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.viralThreshold') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.viral_threshold }}</span>
-                    </div>
-                    <div class="param-row">
-                      <span class="param-label">{{ $t('step2.echoChamberStrength') }}</span>
-                      <span class="param-value">{{ simulationConfig.reddit_config.echo_chamber_strength }}</span>
-                    </div>
-                  </div>
+                  <div class="platform-forms">{{ card.forms.join(' · ') }}</div>
                 </div>
               </div>
             </div>
@@ -634,6 +615,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { entityTypeLabel } from '../utils/ontologyLabels'
+import { platformLabel, platformColor, PLATFORM_FORMS } from '../utils/platformLabels'
 import {
   prepareSimulation,
   getPrepareStatus,
@@ -663,6 +646,32 @@ const profiles = ref([])
 const entityTypes = ref([])
 const expectedTotal = ref(null)
 const simulationConfig = ref(null)
+const researchSummary = ref('')
+
+// بطاقات المنصّات: تُبنى من platform_configs التي يرجّعها الخادم (فيسبوك/واتساب/
+// تيك توك/تويتر...)، وترجع إلى الحقول القديمة إن كانت محاكاة قديمة.
+const platformCards = computed(() => {
+  const config = simulationConfig.value
+  if (!config) return []
+  const fromServer = config.platform_configs
+  const entries = []
+  if (fromServer && typeof fromServer === 'object') {
+    for (const key of Object.keys(fromServer)) {
+      const value = fromServer[key] || {}
+      entries.push({ platform: key, ...value })
+    }
+  }
+  if (!entries.length) {
+    if (config.twitter_config) entries.push({ platform: 'twitter', ...config.twitter_config })
+    if (config.reddit_config) entries.push({ platform: 'reddit', ...config.reddit_config })
+  }
+  return entries.map((item) => ({
+    ...item,
+    label: platformLabel(item.platform),
+    color: platformColor(item.platform),
+    forms: PLATFORM_FORMS[item.platform] || []
+  }))
+})
 const selectedProfile = ref(null)
 const showProfilesDetail = ref(true)
 
@@ -1001,6 +1010,7 @@ const fetchConfigRealtime = async () => {
 
         // 显示详细配置摘要
         if (data.summary) {
+          researchSummary.value = data.summary.research_summary || researchSummary.value
           addLog(t('log.configSummaryAgents', { count: data.summary.total_agents }))
           addLog(t('log.configSummaryHours', { hours: data.summary.simulation_hours }))
           addLog(t('log.configSummaryPosts', { count: data.summary.initial_posts_count }))
@@ -1761,8 +1771,48 @@ onUnmounted(() => {
 /* Platforms Grid */
 .platforms-grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 12px;
+}
+
+.platform-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-inline-end: 6px;
+}
+
+.research-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #555;
+  background: #F4F7FA;
+  border-radius: 6px;
+  padding: 9px 12px;
+  margin: 0 0 12px;
+}
+
+.research-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: #0B6E4F;
+  background: #E3F4EC;
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+
+.platform-forms {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #E5E5E5;
+  font-size: 11px;
+  color: #777;
+  line-height: 1.6;
 }
 
 .platform-card {

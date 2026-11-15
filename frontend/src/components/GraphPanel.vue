@@ -236,6 +236,7 @@
 </template>
 
 <script setup>
+import { entityTypeLabel } from '../utils/ontologyLabels'
 import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import * as d3 from 'd3'
 

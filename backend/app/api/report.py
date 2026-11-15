@@ -638,7 +638,7 @@ def run_report_scenario(report_id: str):
     if not change:
         return jsonify({
             "success": False,
-            "error": "اكتب التغيير المطلوب أولًا (مثال: خفض العمولة إلى 5%).",
+            "error": "اكتب التغيير المطلوب أولًا (أي افتراض واحد تريد اختبار أثره).",
         }), 400
 
     try:
@@ -667,6 +667,42 @@ def run_report_scenario(report_id: str):
         return jsonify({
             "success": False,
             "error": "تعذر تشغيل السيناريو، حاول مرة أخرى.",
+        }), 500
+
+
+@report_bp.route('/<report_id>/scenario-suggestions', methods=['GET'])
+def report_scenario_suggestions(report_id: str):
+    """اقتراحات تغييرات جاهزة، مبنية على موضوع هذا التقرير وبحث الويب عنه."""
+    from ..services.scenario_runner import suggest_changes
+
+    try:
+        report = ReportManager.get_report(report_id)
+        if not report:
+            return jsonify({
+                "success": False,
+                "error": t('api.reportNotFound', id=report_id)
+            }), 404
+
+        simulation_id = getattr(report, 'simulation_id', None)
+        if not simulation_id:
+            return jsonify({
+                "success": True,
+                "data": {"suggestions": [], "reason": "هذا التقرير غير مرتبط بمحاكاة"},
+            })
+
+        try:
+            count = int(request.args.get('count') or 3)
+        except (TypeError, ValueError):
+            count = 3
+
+        data = suggest_changes(report_id, simulation_id, count=count)
+        data.pop('from_model', None)
+        return jsonify({"success": True, "data": data})
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر توليد اقتراحات السيناريو: {exc}")
+        return jsonify({
+            "success": False,
+            "error": "تعذر تجهيز اقتراحات الآن، اكتب التغيير بنفسك.",
         }), 500
 
 

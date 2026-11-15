@@ -3,14 +3,17 @@
     <!-- Top Control Bar -->
     <div class="control-bar">
       <div class="status-group">
-        <!-- Twitter 平台进度 -->
-        <div class="platform-status twitter" :class="{ active: runStatus.twitter_running, completed: runStatus.twitter_completed }">
+        <!-- بطاقة لكل منصّة شاركت في المحاكاة (فيسبوك/واتساب/تيك توك/تويتر...) -->
+        <div
+          v-for="card in platformCards"
+          :key="card.platform"
+          class="platform-status"
+          :class="[card.platform, { active: card.running, completed: card.completed }]"
+        >
           <div class="platform-header">
-            <svg class="platform-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-            </svg>
-            <span class="platform-name">Info Plaza</span>
-            <span v-if="runStatus.twitter_completed" class="status-badge">
+            <span class="platform-dot" :style="{ background: card.color }"></span>
+            <span class="platform-name">{{ card.label }}</span>
+            <span v-if="card.completed" class="status-badge">
               <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3">
                 <polyline points="20 6 9 17 4 12"></polyline>
               </svg>
@@ -18,73 +21,22 @@
           </div>
           <div class="platform-stats">
             <span class="stat">
-              <span class="stat-label">ROUND</span>
-              <span class="stat-value mono">{{ runStatus.twitter_current_round || 0 }}<span class="stat-total">/{{ runStatus.total_rounds || maxRounds || '-' }}</span></span>
+              <span class="stat-label">الجولة</span>
+              <span class="stat-value mono">{{ card.current_round || 0 }}<span class="stat-total">/{{ runStatus.total_rounds || maxRounds || '-' }}</span></span>
             </span>
             <span class="stat">
-              <span class="stat-label">TIME</span>
-              <span class="stat-value mono">{{ twitterElapsedTime }}</span>
+              <span class="stat-label">الزمن</span>
+              <span class="stat-value mono">{{ card.elapsed }}</span>
             </span>
             <span class="stat">
-              <span class="stat-label">ACTS</span>
-              <span class="stat-value mono">{{ runStatus.twitter_actions_count || 0 }}</span>
+              <span class="stat-label">الأفعال</span>
+              <span class="stat-value mono">{{ card.actions_count || 0 }}</span>
             </span>
           </div>
-          <!-- 可用动作提示 -->
           <div class="actions-tooltip">
-            <div class="tooltip-title">Available Actions</div>
+            <div class="tooltip-title">أشكال الفعل</div>
             <div class="tooltip-actions">
-              <span class="tooltip-action">POST</span>
-              <span class="tooltip-action">LIKE</span>
-              <span class="tooltip-action">REPOST</span>
-              <span class="tooltip-action">QUOTE</span>
-              <span class="tooltip-action">FOLLOW</span>
-              <span class="tooltip-action">IDLE</span>
-            </div>
-          </div>
-        </div>
-        
-        <!-- Reddit 平台进度 -->
-        <div class="platform-status reddit" :class="{ active: runStatus.reddit_running, completed: runStatus.reddit_completed }">
-          <div class="platform-header">
-            <svg class="platform-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path>
-            </svg>
-            <span class="platform-name">Topic Community</span>
-            <span v-if="runStatus.reddit_completed" class="status-badge">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3">
-                <polyline points="20 6 9 17 4 12"></polyline>
-              </svg>
-            </span>
-          </div>
-          <div class="platform-stats">
-            <span class="stat">
-              <span class="stat-label">ROUND</span>
-              <span class="stat-value mono">{{ runStatus.reddit_current_round || 0 }}<span class="stat-total">/{{ runStatus.total_rounds || maxRounds || '-' }}</span></span>
-            </span>
-            <span class="stat">
-              <span class="stat-label">TIME</span>
-              <span class="stat-value mono">{{ redditElapsedTime }}</span>
-            </span>
-            <span class="stat">
-              <span class="stat-label">ACTS</span>
-              <span class="stat-value mono">{{ runStatus.reddit_actions_count || 0 }}</span>
-            </span>
-          </div>
-          <!-- 可用动作提示 -->
-          <div class="actions-tooltip">
-            <div class="tooltip-title">Available Actions</div>
-            <div class="tooltip-actions">
-              <span class="tooltip-action">POST</span>
-              <span class="tooltip-action">COMMENT</span>
-              <span class="tooltip-action">LIKE</span>
-              <span class="tooltip-action">DISLIKE</span>
-              <span class="tooltip-action">SEARCH</span>
-              <span class="tooltip-action">TREND</span>
-              <span class="tooltip-action">FOLLOW</span>
-              <span class="tooltip-action">MUTE</span>
-              <span class="tooltip-action">REFRESH</span>
-              <span class="tooltip-action">IDLE</span>
+              <span v-for="form in card.forms" :key="form" class="tooltip-action">{{ form }}</span>
             </div>
           </div>
         </div>
@@ -110,15 +62,14 @@
         <div class="timeline-stats">
           <span class="total-count">TOTAL EVENTS: <span class="mono">{{ allActions.length }}</span></span>
           <span class="platform-breakdown">
-            <span class="breakdown-item twitter">
-              <svg class="mini-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-              <span class="mono">{{ twitterActionsCount }}</span>
-            </span>
-            <span class="breakdown-divider">/</span>
-            <span class="breakdown-item reddit">
-              <svg class="mini-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
-              <span class="mono">{{ redditActionsCount }}</span>
-            </span>
+            <template v-for="(item, idx) in platformBreakdown" :key="item.key">
+              <span class="breakdown-divider" v-if="idx > 0">/</span>
+              <span class="breakdown-item">
+                <span class="breakdown-dot" :style="{ background: platformColor(item.key) }"></span>
+                <span class="breakdown-label">{{ item.label }}</span>
+                <span class="mono">{{ item.count }}</span>
+              </span>
+            </template>
           </span>
         </div>
       </div>
@@ -147,8 +98,9 @@
                 
                 <div class="header-meta">
                   <div class="platform-indicator">
-                    <svg v-if="action.platform === 'twitter'" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-                    <svg v-else viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                    <span class="platform-chip" :style="{ borderColor: platformColor(action.platform), color: platformColor(action.platform) }">
+                      {{ platformLabel(action.platform) }}
+                    </span>
                   </div>
                   <div class="action-badge" :class="getActionTypeClass(action.action_type)">
                     {{ getActionTypeLabel(action.action_type) }}
@@ -290,6 +242,13 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import {
+  platformLabel,
+  platformColor,
+  platformKeysFrom,
+  PLATFORM_FORMS,
+  DEFAULT_PLATFORMS
+} from '../utils/platformLabels'
+import {
   startSimulation,
   stopSimulation,
   getRunStatus,
@@ -332,14 +291,48 @@ const chronologicalActions = computed(() => {
   return allActions.value
 })
 
-// 各平台动作计数
-const twitterActionsCount = computed(() => {
-  return allActions.value.filter(a => a.platform === 'twitter').length
+// الأفعال لكل منصّة (من الوقائع نفسها، لا من رقمين ثابتين)
+const actionCountByPlatform = computed(() => {
+  const counts = {}
+  for (const action of allActions.value) {
+    const key = action.platform || 'facebook'
+    counts[key] = (counts[key] || 0) + 1
+  }
+  return counts
 })
 
-const redditActionsCount = computed(() => {
-  return allActions.value.filter(a => a.platform === 'reddit').length
+// المنصّات المعروضة: ما رجع من الخادم، وإلا الافتراضي السوداني
+const platformKeys = computed(() => {
+  const keys = platformKeysFrom(runStatus.value, DEFAULT_PLATFORMS)
+  const extra = Object.keys(actionCountByPlatform.value).filter(k => !keys.includes(k))
+  return [...keys, ...extra]
 })
+
+// بطاقة لكل منصّة: الاسم العربي + الجولة + الزمن + عدد الأفعال
+const platformCards = computed(() => {
+  const statusPlatforms = (runStatus.value && runStatus.value.platforms) || {}
+  return platformKeys.value.map((key) => {
+    const info = statusPlatforms[key] || {}
+    const rounds = info.current_round || 0
+    return {
+      platform: key,
+      label: info.label || platformLabel(key),
+      color: platformColor(key),
+      forms: PLATFORM_FORMS[key] || [],
+      running: !!info.running,
+      completed: !!info.completed,
+      current_round: rounds,
+      actions_count: info.actions_count != null ? info.actions_count : (actionCountByPlatform.value[key] || 0),
+      elapsed: formatElapsedTime(rounds)
+    }
+  })
+})
+
+// شريط التوزيع في أعلى الخط الزمني
+const platformBreakdown = computed(() => platformKeys.value
+  .map(key => ({ key, label: platformLabel(key), count: actionCountByPlatform.value[key] || 0 }))
+  .filter(item => item.count > 0)
+)
 
 // 格式化模拟流逝时间（根据轮次和每轮分钟数计算）
 const formatElapsedTime = (currentRound) => {
@@ -349,16 +342,6 @@ const formatElapsedTime = (currentRound) => {
   const minutes = totalMinutes % 60
   return `${hours}h ${minutes}m`
 }
-
-// Twitter平台的模拟流逝时间
-const twitterElapsedTime = computed(() => {
-  return formatElapsedTime(runStatus.value.twitter_current_round || 0)
-})
-
-// Reddit平台的模拟流逝时间
-const redditElapsedTime = computed(() => {
-  return formatElapsedTime(runStatus.value.reddit_current_round || 0)
-})
 
 // Methods
 const addLog = (msg) => {
@@ -371,8 +354,7 @@ const resetAllState = () => {
   runStatus.value = {}
   allActions.value = []
   actionIds.value = new Set()
-  prevTwitterRound.value = 0
-  prevRedditRound.value = 0
+  prevPlatformRounds.value = {}
   startError.value = null
   isStarting.value = false
   isStopping.value = false
@@ -485,9 +467,8 @@ const stopPolling = () => {
   }
 }
 
-// 追踪各平台的上一次轮次，用于检测变化并输出日志
-const prevTwitterRound = ref(0)
-const prevRedditRound = ref(0)
+// نتتبّع جولة كل منصّة على حدة لكتابة سطر عند كل تقدّم
+const prevPlatformRounds = ref({})
 
 const fetchRunStatus = async () => {
   if (!props.simulationId) return
@@ -500,15 +481,16 @@ const fetchRunStatus = async () => {
       
       runStatus.value = data
       
-      // 分别检测各平台的轮次变化并输出日志
-      if (data.twitter_current_round > prevTwitterRound.value) {
-        addLog(`[Plaza] R${data.twitter_current_round}/${data.total_rounds} | T:${data.twitter_simulated_hours || 0}h | A:${data.twitter_actions_count}`)
-        prevTwitterRound.value = data.twitter_current_round
-      }
-      
-      if (data.reddit_current_round > prevRedditRound.value) {
-        addLog(`[Community] R${data.reddit_current_round}/${data.total_rounds} | T:${data.reddit_simulated_hours || 0}h | A:${data.reddit_actions_count}`)
-        prevRedditRound.value = data.reddit_current_round
+      // تقدّم كل منصّة على حدة (فيسبوك/واتساب/تيك توك/تويتر...)
+      const platformsInfo = data.platforms || {}
+      for (const key of Object.keys(platformsInfo)) {
+        const info = platformsInfo[key] || {}
+        const rounds = info.current_round || 0
+        const before = prevPlatformRounds.value[key] || 0
+        if (rounds > before) {
+          addLog(`[${info.label || platformLabel(key)}] جولة ${rounds}/${data.total_rounds || '-'} | الأفعال: ${info.actions_count || 0}`)
+          prevPlatformRounds.value = { ...prevPlatformRounds.value, [key]: rounds }
+        }
       }
       
       // 检测模拟是否已完成（通过 runner_status 或平台完成状态判断）
@@ -539,23 +521,29 @@ const checkPlatformsCompleted = (data) => {
   // 如果没有任何平台数据，返回 false
   if (!data) return false
   
-  // 检查各平台的完成状态
-  const twitterCompleted = data.twitter_completed === true
-  const redditCompleted = data.reddit_completed === true
-  
-  // 如果至少有一个平台完成了，检查是否所有启用的平台都完成了
-  // 通过 actions_count 判断平台是否被启用（如果 count > 0 或 running 曾为 true）
-  const twitterEnabled = (data.twitter_actions_count > 0) || data.twitter_running || twitterCompleted
-  const redditEnabled = (data.reddit_actions_count > 0) || data.reddit_running || redditCompleted
-  
-  // 如果没有任何平台被启用，返回 false
-  if (!twitterEnabled && !redditEnabled) return false
-  
-  // 检查所有启用的平台是否都已完成
-  if (twitterEnabled && !twitterCompleted) return false
-  if (redditEnabled && !redditCompleted) return false
-  
-  return true
+  const platformsInfo = data.platforms || {}
+  const keys = Object.keys(platformsInfo)
+  if (!keys.length) {
+    // حالة قديمة بلا خريطة منصّات
+    const twitterCompleted = data.twitter_completed === true
+    const redditCompleted = data.reddit_completed === true
+    const twitterEnabled = (data.twitter_actions_count > 0) || data.twitter_running || twitterCompleted
+    const redditEnabled = (data.reddit_actions_count > 0) || data.reddit_running || redditCompleted
+    if (!twitterEnabled && !redditEnabled) return false
+    if (twitterEnabled && !twitterCompleted) return false
+    if (redditEnabled && !redditCompleted) return false
+    return true
+  }
+
+  let anyEnabled = false
+  for (const key of keys) {
+    const info = platformsInfo[key] || {}
+    const enabled = (info.actions_count > 0) || info.running || info.completed
+    if (!enabled) continue
+    anyEnabled = true
+    if (!info.completed) return false
+  }
+  return anyEnabled
 }
 
 const fetchRunStatusDetail = async () => {
@@ -856,8 +844,28 @@ onUnmounted(() => {
   letter-spacing: 0.05em;
 }
 
-.platform-status.twitter .platform-icon { color: #000; }
-.platform-status.reddit .platform-icon { color: #000; }
+.platform-status { min-width: 0; }
+.platform-status .platform-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.breakdown-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.breakdown-label { font-size: 10px; color: #555; }
+.platform-chip {
+  font-size: 10px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
 
 .platform-stats {
   display: flex;
@@ -1002,8 +1010,7 @@ onUnmounted(() => {
 }
 
 .breakdown-divider { color: #DDD; }
-.breakdown-item.twitter { color: #000; }
-.breakdown-item.reddit { color: #000; }
+.breakdown-item { color: #000; }
 
 /* --- Timeline Feed --- */
 .timeline-feed {
@@ -1055,10 +1062,8 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 
-.timeline-item.twitter .marker-dot { background: #000; }
-.timeline-item.reddit .marker-dot { background: #000; }
-.timeline-item.twitter .timeline-marker { border-color: #000; }
-.timeline-item.reddit .timeline-marker { border-color: #000; }
+.timeline-item .marker-dot { background: #000; }
+.timeline-item .timeline-marker { border-color: #000; }
 
 /* Card Layout */
 .timeline-card {
@@ -1077,24 +1082,14 @@ onUnmounted(() => {
   border-color: #DDD;
 }
 
-/* Left side (Twitter) */
-.timeline-item.twitter {
+/* كل الأفعال في عمود واحد (لم نعد نقسم المنصّات يمينًا/يسارًا) */
+.timeline-item {
   justify-content: flex-start;
-  padding-right: 50%;
+  padding-inline-start: 0;
 }
-.timeline-item.twitter .timeline-card {
-  margin-left: auto;
-  margin-right: 32px; /* Gap from axis */
-}
-
-/* Right side (Reddit) */
-.timeline-item.reddit {
-  justify-content: flex-end;
-  padding-left: 50%;
-}
-.timeline-item.reddit .timeline-card {
-  margin-right: auto;
-  margin-left: 32px; /* Gap from axis */
+.timeline-item .timeline-card {
+  margin-inline-start: 32px;
+  margin-inline-end: 0;
 }
 
 /* Card Content Styles */

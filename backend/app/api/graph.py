@@ -398,13 +398,42 @@ def generate_ontology():
         ProjectManager.save_extracted_text(project.project_id, all_text)
         logger.info(f"文本提取完成，共 {len(all_text)} 字符")
         
+        # ===== بحث ويب حقيقي عن الموضوع (أي موضوع، سوداني أو عالمي) =====
+        # نبحث قبل تصميم الأنواع: حتى يفهم المحرّك الموضوع كما هو في الواقع
+        # (أسماء، جهات، أرقام رسمية، شكاوى الناس)، لا كما يخمّن من المستند وحده.
+        research_block = ""
+        research_meta = {}
+        try:
+            from ..services import web_research
+            bundle = web_research.gather_for_simulation(
+                requirement=simulation_requirement,
+                title=project_name,
+            )
+            research_block = web_research.prompt_block(bundle)
+            research_meta = {
+                "summary": web_research.summary_line(bundle),
+                "ok": bool(bundle.get("ok")),
+                "fetched_at": bundle.get("fetched_at"),
+                "topic_facts": len(((bundle.get("topic") or {}).get("facts") or [])),
+                "topic_news": len(((bundle.get("topic") or {}).get("news") or [])),
+                "sudan_news": len(((bundle.get("pulse") or {}).get("news") or [])),
+                "errors": (bundle.get("errors") or []) + ((bundle.get("topic") or {}).get("errors") or []),
+            }
+            logger.info(f"بحث الويب: {research_meta['summary']}")
+        except Exception as research_err:  # noqa: BLE001
+            logger.warning(f"تعذّر بحث الويب (نكمل بدونه): {research_err}")
+            research_meta = {"summary": "تعذّر البحث في الويب", "ok": False, "errors": [str(research_err)]}
+
         # 生成本体
         logger.info("调用 LLM 生成本体定义...")
         generator = OntologyGenerator()
+        merged_context = (additional_context or "").strip()
+        if research_block:
+            merged_context = (merged_context + "\n\n" + research_block).strip()
         ontology = generator.generate(
             document_texts=document_texts,
             simulation_requirement=simulation_requirement,
-            additional_context=additional_context if additional_context else None
+            additional_context=merged_context if merged_context else None
         )
         
         # 保存本体到项目
@@ -417,6 +446,11 @@ def generate_ontology():
             "edge_types": ontology.get("edge_types", [])
         }
         project.analysis_summary = ontology.get("analysis_summary", "")
+        # نحفظ نتيجة البحث مع المشروع حتى تُستخدم في الشخصيات والسيناريو والتقرير
+        try:
+            project.research = research_meta
+        except Exception:
+            pass
         project.status = ProjectStatus.ONTOLOGY_GENERATED
         ProjectManager.save_project(project)
         logger.info(f"=== 本体生成完成 === 项目ID: {project.project_id}")
@@ -428,6 +462,7 @@ def generate_ontology():
                 "project_name": project.name,
                 "ontology": project.ontology,
                 "analysis_summary": project.analysis_summary,
+                "research": research_meta,
                 "files": project.files,
                 "total_text_length": project.total_text_length
             }

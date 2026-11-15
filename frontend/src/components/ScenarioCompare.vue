@@ -19,18 +19,34 @@
           <!-- شاشة الإعداد -->
           <div v-if="!result" class="scn-body">
             <p class="scn-hint">
-              عدّل افتراضًا واحدًا (مثل العمولة أو السعر) وسنعيد تشغيل جولات قصيرة على
+              عدّل افتراضًا واحدًا في <b>موضوع هذا التقرير</b> وسنعيد تشغيل جولات قصيرة على
               <b>نفس الوكلاء</b>، ثم نقارن النتيجة بالأصل — بلا إعادة محاكاة كاملة.
             </p>
 
             <label class="scn-label">ما التغيير المطلوب؟</label>
+
+            <div v-if="suggestLoading" class="scn-suggest-loading">أجهّز اقتراحات من موضوع التقرير…</div>
+            <div v-else-if="suggestions.length" class="scn-suggest">
+              <button
+                v-for="(item, idx) in suggestions"
+                :key="idx"
+                type="button"
+                class="scn-chip"
+                :class="{ active: change === item.change }"
+                @click="pickSuggestion(item)"
+              >
+                {{ item.change }}
+              </button>
+            </div>
+
             <textarea
               v-model="change"
               class="scn-text"
               rows="3"
               maxlength="400"
-              placeholder="مثال: خفض العمولة من 10% إلى 5%"
+              :placeholder="placeholder"
             ></textarea>
+            <p v-if="pickedWhy" class="scn-why">{{ pickedWhy }}</p>
 
             <label class="scn-label">عدد الجولات</label>
             <div class="scn-rounds">
@@ -101,9 +117,9 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import service from '../api'
-import { runReportScenario, getScenarioDownloadUrl } from '../api/report'
+import { runReportScenario, getScenarioDownloadUrl, getScenarioSuggestions } from '../api/report'
 
 const props = defineProps({
   reportId: { type: String, required: true }
@@ -111,6 +127,13 @@ const props = defineProps({
 
 const open = ref(false)
 const change = ref('')
+const suggestions = ref([])
+const suggestLoading = ref(false)
+const suggestionsLoaded = ref(false)
+const pickedWhy = ref('')
+const placeholder = computed(() => suggestions.value.length
+  ? `مثال من موضوعك: ${suggestions.value[0].change}`
+  : 'اكتب افتراضًا واحدًا تريد اختبار أثره على الناس')
 const rounds = ref(2)
 const busy = ref(false)
 const error = ref('')
@@ -196,6 +219,29 @@ const downloadFile = async (format) => {
   }
 }
 
+const pickSuggestion = (item) => {
+  change.value = item.change || ''
+  pickedWhy.value = item.why || ''
+}
+
+// نطلب الاقتراحات أول مرة يُفتح فيها الصندوق فقط (لا نُثقل كل صفحة)
+const loadSuggestions = async (force = false) => {
+  if (suggestLoading.value) return
+  if (suggestionsLoaded.value && !force) return
+  suggestLoading.value = true
+  try {
+    const res = await getScenarioSuggestions(props.reportId)
+    const data = (res && (res.data || res)) || {}
+    const list = data.suggestions || []
+    suggestions.value = Array.isArray(list) ? list.slice(0, 3) : []
+    suggestionsLoaded.value = true
+  } catch (err) {
+    suggestions.value = []
+  } finally {
+    suggestLoading.value = false
+  }
+}
+
 const run = async () => {
   if (busy.value || !change.value.trim()) return
   busy.value = true
@@ -222,6 +268,10 @@ const reset = () => {
   result.value = null
   error.value = ''
 }
+
+watch(open, (value) => {
+  if (value) loadSuggestions()
+})
 
 const close = () => {
   open.value = false
@@ -267,6 +317,32 @@ const close = () => {
 .scn-hint { font-size: 13px; line-height: 1.85; color: var(--text-secondary, #475569); margin: 0 0 4px; }
 
 .scn-label { font-size: 12.5px; font-weight: 700; color: var(--text-secondary, #475569); }
+
+/* اقتراحات مبنية على موضوع التقرير */
+.scn-suggest {
+  display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 10px;
+}
+.scn-chip {
+  font-family: inherit; font-size: 12.5px; line-height: 1.5; text-align: start;
+  padding: 8px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border-frame, #CBD5E1);
+  background: var(--bg-soft, #F8FAFC);
+  color: var(--text-primary, #0F172A);
+  transition: border-color .15s ease, background .15s ease;
+  max-width: 100%;
+}
+.scn-chip.active {
+  border-color: var(--accent-orange, #FF4500);
+  background: rgba(255, 69, 0, .08);
+  font-weight: 700;
+}
+.scn-suggest-loading {
+  font-size: 12.5px; color: var(--text-secondary, #64748B); margin: 2px 0 10px;
+}
+.scn-why {
+  font-size: 12.5px; line-height: 1.7; color: var(--text-secondary, #475569);
+  margin: -2px 0 10px;
+}
 
 .scn-text {
   width: 100%; border-radius: 12px; padding: 10px 12px;

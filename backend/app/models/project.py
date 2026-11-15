@@ -38,6 +38,8 @@ class Project:
     # 本体信息（接口1生成后填充）
     ontology: Optional[Dict[str, Any]] = None
     analysis_summary: Optional[str] = None
+    # نتيجة بحث الويب عن الموضوع (ملخّص + عدد المصادر + تاريخ البحث)
+    research: Optional[Dict[str, Any]] = None
     
     # 图谱信息（接口2完成后填充）
     graph_id: Optional[str] = None
@@ -65,6 +67,7 @@ class Project:
             "total_text_length": self.total_text_length,
             "ontology": self.ontology,
             "analysis_summary": self.analysis_summary,
+            "research": self.research,
             "graph_id": self.graph_id,
             "graph_build_task_id": self.graph_build_task_id,
             "zep_batch_id": self.zep_batch_id,
@@ -92,6 +95,7 @@ class Project:
             total_text_length=data.get('total_text_length', 0),
             ontology=data.get('ontology'),
             analysis_summary=data.get('analysis_summary'),
+            research=data.get('research'),
             graph_id=data.get('graph_id'),
             graph_build_task_id=data.get('graph_build_task_id'),
             zep_batch_id=data.get('zep_batch_id'),

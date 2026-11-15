@@ -248,6 +248,7 @@ def create_simulation():
             graph_id=graph_id,
             enable_twitter=data.get('enable_twitter', True),
             enable_reddit=data.get('enable_reddit', True),
+            platforms=data.get('platforms'),
         )
         from ..models.user import UserStore, get_current_user
         current_user = get_current_user()
@@ -573,10 +574,11 @@ def prepare_simulation():
                 def progress_callback(stage, progress, message, **kwargs):
                     # 计算总进度
                     stage_weights = {
-                        "reading": (0, 20),           # 0-20%
-                        "generating_profiles": (20, 70),  # 20-70%
-                        "generating_config": (70, 90),    # 70-90%
-                        "copying_scripts": (90, 100)       # 90-100%
+                        "researching": (0, 15),          # بحث الويب عن الموضوع
+                        "reading": (15, 25),
+                        "generating_profiles": (25, 72),
+                        "generating_config": (72, 92),
+                        "copying_scripts": (92, 100)
                     }
                     
                     start, end = stage_weights.get(stage, (0, 100))
@@ -584,6 +586,7 @@ def prepare_simulation():
                     
                     # 构建详细进度信息
                     stage_names = {
+                        "researching": "البحث في الويب عن الموضوع",
                         "reading": t('progress.readingGraphEntities'),
                         "generating_profiles": t('progress.generatingProfiles'),
                         "generating_config": t('progress.generatingSimConfig'),
@@ -1325,6 +1328,11 @@ def get_simulation_config_realtime(simulation_id: str):
                 "hot_topics_count": len(config.get("event_config", {}).get("hot_topics", [])),
                 "has_twitter_config": "twitter_config" in config,
                 "has_reddit_config": "reddit_config" in config,
+                "platforms": list((config.get("platform_configs") or {}).keys()) or [
+                    p for p in ("twitter", "reddit")
+                    if f"{p}_config" in config
+                ],
+                "research_summary": state.research_summary if state else "",
                 "generated_at": config.get("generated_at"),
                 "llm_model": config.get("llm_model")
             }
@@ -1919,6 +1927,76 @@ def stop_simulation():
 
 # ============== 实时状态监控接口 ==============
 
+def _interview_platforms():
+    """المنصّات المسموح بها في المقابلات = كل منصّة في السجل، لا تويتر/ريديت فقط."""
+    try:
+        from ..services import platforms as _pr
+        return tuple(_pr.PLATFORMS.keys())
+    except Exception:
+        return ("twitter", "reddit", "facebook", "whatsapp", "tiktok")
+
+
+@simulation_bp.route('/<simulation_id>/research', methods=['GET'])
+def get_simulation_research(simulation_id: str):
+    """ما وجده بحث الويب عن موضوع هذه المحاكاة (وقائع + مصادر + تاريخ البحث)."""
+    try:
+        from ..services import web_research
+
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        bundle = web_research.load(sim_dir)
+        if not bundle:
+            return jsonify({
+                "success": True,
+                "data": {
+                    "simulation_id": simulation_id,
+                    "available": False,
+                    "summary": "لم يُجرَ بحث ويب لهذه المحاكاة بعد",
+                },
+            })
+        return jsonify({
+            "success": True,
+            "data": {
+                "simulation_id": simulation_id,
+                "available": True,
+                "summary": web_research.summary_line(bundle),
+                "fetched_at": bundle.get("fetched_at"),
+                "topic": (bundle.get("topic") or {}).get("facts") or [],
+                "topic_news": (bundle.get("topic") or {}).get("news") or [],
+                "sudan_news": (bundle.get("pulse") or {}).get("news") or [],
+                "errors": bundle.get("errors") or [],
+            },
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر قراءة بحث الويب: {exc}")
+        return jsonify({"success": False, "error": "تعذر قراءة نتيجة البحث"}), 500
+
+
+@simulation_bp.route('/research/preview', methods=['POST'])
+def preview_web_research():
+    """بحث ويب تجريبي عن أي موضوع — للتأكد أن المحرّك يفهم موضوعًا خارج السودان أيضًا."""
+    try:
+        from ..services import web_research
+
+        payload = request.get_json(silent=True) or {}
+        topic = (payload.get('topic') or '').strip()
+        if not topic:
+            return jsonify({"success": False, "error": "اكتب الموضوع الذي تريد البحث عنه"}), 400
+        bundle = web_research.gather_topic(topic, use_cache=False)
+        return jsonify({
+            "success": True,
+            "data": {
+                "topic": topic,
+                "summary": web_research.summary_line({"topic": bundle}),
+                "facts": bundle.get("facts") or [],
+                "news": bundle.get("news") or [],
+                "errors": bundle.get("errors") or [],
+            },
+        })
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر البحث التجريبي: {exc}")
+        return jsonify({"success": False, "error": "تعذر البحث الآن"}), 500
+
+
 @simulation_bp.route('/<simulation_id>/run-status', methods=['GET'])
 def get_run_status(simulation_id: str):
     """
@@ -2026,7 +2104,8 @@ def get_run_status_detail(simulation_id: str):
                     "runner_status": "idle",
                     "all_actions": [],
                     "twitter_actions": [],
-                    "reddit_actions": []
+                    "reddit_actions": [],
+                    "platform_actions": {}
                 }
             })
         
@@ -2036,16 +2115,17 @@ def get_run_status_detail(simulation_id: str):
             platform=platform_filter
         )
         
-        # 分平台获取动作
-        twitter_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="twitter"
-        ) if not platform_filter or platform_filter == "twitter" else []
-        
-        reddit_actions = SimulationRunner.get_all_actions(
-            simulation_id=simulation_id,
-            platform="reddit"
-        ) if not platform_filter or platform_filter == "reddit" else []
+        # لكل منصّة قائمة أفعال مستقلة (فيسبوك/واتساب/تيك توك/تويتر/ريديت...)
+        platform_action_lists = {}
+        for _p in (run_state.platform_names() or []):
+            if platform_filter and platform_filter != _p:
+                continue
+            platform_action_lists[_p] = [
+                a.to_dict() for a in SimulationRunner.get_all_actions(
+                    simulation_id=simulation_id, platform=_p)
+            ]
+        twitter_actions = platform_action_lists.get("twitter", [])
+        reddit_actions = platform_action_lists.get("reddit", [])
         
         # 获取当前轮次的动作（recent_actions 只展示最新一轮）
         current_round = run_state.current_round
@@ -2060,6 +2140,7 @@ def get_run_status_detail(simulation_id: str):
         result["all_actions"] = [a.to_dict() for a in all_actions]
         result["twitter_actions"] = [a.to_dict() for a in twitter_actions]
         result["reddit_actions"] = [a.to_dict() for a in reddit_actions]
+        result["platform_actions"] = platform_action_lists
         result["rounds_count"] = len(run_state.rounds)
         # recent_actions 只展示当前最新一轮两个平台的内容
         result["recent_actions"] = [a.to_dict() for a in recent_actions]
@@ -2578,7 +2659,7 @@ def interview_agent():
             }), 400
         
         # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
+        if platform and platform not in _interview_platforms():
             return jsonify({
                 "success": False,
                 "error": t('api.invalidInterviewPlatform')
@@ -2693,7 +2774,7 @@ def interview_agents_batch():
             }), 400
 
         # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
+        if platform and platform not in _interview_platforms():
             return jsonify({
                 "success": False,
                 "error": t('api.invalidInterviewPlatform')
@@ -2713,7 +2794,7 @@ def interview_agents_batch():
                 }), 400
             # 验证每项的platform（如果有）
             item_platform = interview.get('platform')
-            if item_platform and item_platform not in ("twitter", "reddit"):
+            if item_platform and item_platform not in _interview_platforms():
                 return jsonify({
                     "success": False,
                     "error": t('api.interviewListInvalidPlatform', index=i+1)
@@ -2820,7 +2901,7 @@ def interview_all_agents():
             }), 400
 
         # 验证platform参数
-        if platform and platform not in ("twitter", "reddit"):
+        if platform and platform not in _interview_platforms():
             return jsonify({
                 "success": False,
                 "error": t('api.invalidInterviewPlatform')

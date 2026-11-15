@@ -308,6 +308,17 @@ def run_serverless_simulation(
     initial_posts = sim_config.get("event_config", {}).get("initial_posts", [])
 
     platform_header = f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
+
+    # وقائع بحث الويب عن الموضوع: تجعل الأفعال تتكلم عن الواقع اليوم لا عن العموميات
+    try:
+        from . import web_research
+
+        bundle = web_research.load(sim_dir)
+        research_block = web_research.prompt_block(bundle, max_facts=6)
+        if research_block:
+            platform_header += f"{research_block}\n\n"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"تعذر إدراج وقائع البحث في المحاكاة: {exc}")
     if inputs_block:
         platform_header += f"{inputs_block}\n\n"
     # طبقة «الروح السودانية»: تجعل التعليقات قريبة من الواقع لا فصحى إخبارية

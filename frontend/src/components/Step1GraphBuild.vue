@@ -31,8 +31,8 @@
           <div v-if="selectedOntologyItem" class="ontology-detail-overlay">
             <div class="detail-header">
                <div class="detail-title-group">
-                  <span class="detail-type-badge">{{ selectedOntologyItem.itemType === 'entity' ? 'ENTITY' : 'RELATION' }}</span>
-                  <span class="detail-name">{{ selectedOntologyItem.name }}</span>
+                  <span class="detail-type-badge">{{ selectedOntologyItem.itemType === 'entity' ? 'نوع كيان' : 'نوع علاقة' }}</span>
+                  <span class="detail-name">{{ selectedOntologyItem.itemType === 'entity' ? entityTypeLabel(selectedOntologyItem) : relationTypeLabel(selectedOntologyItem) }}</span>
                </div>
                <button class="close-btn" @click="selectedOntologyItem = null">×</button>
             </div>
@@ -41,7 +41,7 @@
                
                <!-- Attributes -->
                <div class="detail-section" v-if="selectedOntologyItem.attributes?.length">
-                  <span class="section-label">ATTRIBUTES</span>
+                  <span class="section-label">الخصائص</span>
                   <div class="attr-list">
                      <div v-for="attr in selectedOntologyItem.attributes" :key="attr.name" class="attr-item">
                         <span class="attr-name">{{ attr.name }}</span>
@@ -53,7 +53,7 @@
 
                <!-- Examples (Entity) -->
                <div class="detail-section" v-if="selectedOntologyItem.examples?.length">
-                  <span class="section-label">EXAMPLES</span>
+                  <span class="section-label">أمثلة</span>
                   <div class="example-list">
                      <span v-for="ex in selectedOntologyItem.examples" :key="ex" class="example-tag">{{ ex }}</span>
                   </div>
@@ -75,30 +75,32 @@
 
           <!-- Generated Entity Tags -->
           <div v-if="projectData?.ontology?.entity_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
-            <span class="tag-label">GENERATED ENTITY TYPES</span>
+            <span class="tag-label">أنواع الكيانات</span>
             <div class="tags-list">
-              <span 
-                v-for="entity in projectData.ontology.entity_types" 
-                :key="entity.name" 
+              <span
+                v-for="entity in projectData.ontology.entity_types"
+                :key="entity.name"
                 class="entity-tag clickable"
+                :title="entity.name"
                 @click="selectOntologyItem(entity, 'entity')"
               >
-                {{ entity.name }}
+                {{ entityTypeLabel(entity) }}
               </span>
             </div>
           </div>
 
           <!-- Generated Relation Tags -->
           <div v-if="projectData?.ontology?.edge_types" class="tags-container" :class="{ 'dimmed': selectedOntologyItem }">
-            <span class="tag-label">GENERATED RELATION TYPES</span>
+            <span class="tag-label">أنواع العلاقات</span>
             <div class="tags-list">
-              <span 
-                v-for="rel in projectData.ontology.edge_types" 
-                :key="rel.name" 
+              <span
+                v-for="rel in projectData.ontology.edge_types"
+                :key="rel.name"
                 class="entity-tag clickable"
+                :title="rel.name"
                 @click="selectOntologyItem(rel, 'relation')"
               >
-                {{ rel.name }}
+                {{ relationTypeLabel(rel) }}
               </span>
             </div>
           </div>
@@ -191,6 +193,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { createSimulation } from '../api/simulation'
+import { entityTypeLabel, relationTypeLabel } from '../utils/ontologyLabels'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -223,8 +226,8 @@ const handleEnterEnvSetup = async () => {
     const res = await createSimulation({
       project_id: props.projectData.project_id,
       graph_id: props.projectData.graph_id,
-      enable_twitter: true,
-      enable_reddit: true
+      // المنصّات التي يجري عليها النقاش السوداني فعلًا
+      platforms: ['facebook', 'whatsapp', 'tiktok', 'twitter']
     })
     
     if (res.success && res.data?.simulation_id) {

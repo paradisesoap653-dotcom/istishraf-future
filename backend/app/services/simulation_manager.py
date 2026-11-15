@@ -41,6 +41,21 @@ class PlatformType(str, Enum):
     REDDIT = "reddit"
 
 
+def _platform_registry():
+    from . import platforms as _pr
+    return _pr
+
+
+def _normalize_platforms(value) -> List[str]:
+    try:
+        return _platform_registry().normalize(value)
+    except Exception:
+        return ['facebook', 'whatsapp', 'tiktok', 'twitter']
+
+
+_DEFAULT_PLATFORMS = _normalize_platforms(None)
+
+
 @dataclass
 class SimulationState:
     """模拟状态"""
@@ -48,7 +63,10 @@ class SimulationState:
     project_id: str
     graph_id: str
     
-    # 平台启用状态
+    # المنصّات التي ستُشغّل (القرار الحقيقي) — الافتراضي هو مجموعة السودان
+    platforms: List[str] = field(default_factory=lambda: list(_DEFAULT_PLATFORMS))
+
+    # حقول قديمة للتوافق الخلفي
     enable_twitter: bool = True
     enable_reddit: bool = True
     
@@ -60,6 +78,9 @@ class SimulationState:
     profiles_count: int = 0
     entity_types: List[str] = field(default_factory=list)
     
+    # نتيجة بحث الويب عن الموضوع
+    research_summary: str = ""
+
     # 配置生成信息
     profiles_generated: bool = False
     config_generated: bool = False
@@ -83,8 +104,9 @@ class SimulationState:
             "simulation_id": self.simulation_id,
             "project_id": self.project_id,
             "graph_id": self.graph_id,
-            "enable_twitter": self.enable_twitter,
-            "enable_reddit": self.enable_reddit,
+            "platforms": list(self.platforms or _DEFAULT_PLATFORMS),
+            "enable_twitter": "twitter" in (self.platforms or []),
+            "enable_reddit": "reddit" in (self.platforms or []),
             "status": self.status.value,
             "entities_count": self.entities_count,
             "profiles_count": self.profiles_count,
@@ -92,6 +114,7 @@ class SimulationState:
             "profiles_generated": self.profiles_generated,
             "config_generated": self.config_generated,
             "config_reasoning": self.config_reasoning,
+            "research_summary": self.research_summary,
             "current_round": self.current_round,
             "twitter_status": self.twitter_status,
             "reddit_status": self.reddit_status,
@@ -101,13 +124,13 @@ class SimulationState:
         }
     
     def get_default_platform(self) -> str:
-        """根据启用状态返回默认平台"""
-        if self.enable_twitter and self.enable_reddit:
-            return "reddit"  # 两者都启用时保持原默认
-        elif self.enable_twitter:
+        """أول منصّة في قائمة المحاكاة (لا تويتر/ريديت فقط)."""
+        plats = list(self.platforms or [])
+        if plats:
+            return plats[0]
+        if self.enable_twitter:
             return "twitter"
-        else:
-            return "reddit"
+        return "reddit"
 
     def to_simple_dict(self) -> Dict[str, Any]:
         """简化状态字典（API返回使用）"""
@@ -121,6 +144,8 @@ class SimulationState:
             "entity_types": self.entity_types,
             "profiles_generated": self.profiles_generated,
             "config_generated": self.config_generated,
+            "platforms": list(self.platforms or []),
+            "research_summary": self.research_summary,
             "error": self.error,
         }
 
@@ -179,6 +204,7 @@ class SimulationManager:
             simulation_id=simulation_id,
             project_id=data.get("project_id", ""),
             graph_id=data.get("graph_id", ""),
+            platforms=_normalize_platforms(data.get("platforms")),
             enable_twitter=data.get("enable_twitter", True),
             enable_reddit=data.get("enable_reddit", True),
             status=SimulationStatus(data.get("status", "created")),
@@ -188,6 +214,7 @@ class SimulationManager:
             profiles_generated=data.get("profiles_generated", False),
             config_generated=data.get("config_generated", False),
             config_reasoning=data.get("config_reasoning", ""),
+            research_summary=data.get("research_summary", ""),
             current_round=data.get("current_round", 0),
             twitter_status=data.get("twitter_status", "not_started"),
             reddit_status=data.get("reddit_status", "not_started"),
@@ -205,6 +232,7 @@ class SimulationManager:
         graph_id: str,
         enable_twitter: bool = True,
         enable_reddit: bool = True,
+        platforms=None,
     ) -> SimulationState:
         """
         创建新的模拟
@@ -221,12 +249,14 @@ class SimulationManager:
         import uuid
         simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
         
+        resolved_platforms = _normalize_platforms(platforms) if platforms else list(_DEFAULT_PLATFORMS)
         state = SimulationState(
             simulation_id=simulation_id,
             project_id=project_id,
             graph_id=graph_id,
-            enable_twitter=enable_twitter,
-            enable_reddit=enable_reddit,
+            platforms=resolved_platforms,
+            enable_twitter="twitter" in resolved_platforms,
+            enable_reddit="reddit" in resolved_platforms,
             status=SimulationStatus.CREATED,
         )
         
@@ -280,6 +310,35 @@ class SimulationManager:
             self._save_simulation_state(state)
             
             sim_dir = self._get_simulation_dir(simulation_id)
+
+            # ========== 阶段0: بحث ويب حقيقي عن الموضوع ==========
+            # يخدم كل ما بعده: الشخصيات، إعدادات المحاكاة، السيناريو، التقرير.
+            research_block = ""
+            try:
+                from . import web_research
+
+                project_title = ""
+                try:
+                    from ..models.project import ProjectManager
+                    _proj = ProjectManager.get_project(state.project_id)
+                    project_title = getattr(_proj, 'name', '') or ''
+                except Exception:
+                    project_title = ""
+
+                if progress_callback:
+                    progress_callback("researching", 0, "أبحث في الويب عن الموضوع…")
+
+                bundle = web_research.gather_for_simulation(
+                    requirement=simulation_requirement,
+                    title=project_title,
+                    sim_dir=sim_dir,
+                )
+                research_block = web_research.prompt_block(bundle)
+                state.research_summary = web_research.summary_line(bundle)
+                self._save_simulation_state(state)
+                logger.info(f"بحث الويب للمحاكاة {simulation_id}: {state.research_summary}")
+            except Exception as research_err:  # noqa: BLE001
+                logger.warning(f"تعذّر بحث الويب (نكمل بدونه): {research_err}")
             
             # ========== 阶段1: 读取并过滤实体 ==========
             if progress_callback:
@@ -355,7 +414,8 @@ class SimulationManager:
                 graph_id=state.graph_id,  # 传入graph_id用于Zep检索
                 parallel_count=parallel_profile_count,  # 并行生成数量
                 realtime_output_path=realtime_output_path,  # 实时保存路径
-                output_platform=realtime_platform  # 输出格式
+                output_platform=realtime_platform,  # 输出格式
+                research_block=research_block,  # وقائع بحث الويب عن الموضوع
             )
             
             state.profiles_count = len(profiles)
@@ -426,7 +486,9 @@ class SimulationManager:
                 document_text=document_text,
                 entities=filtered.entities,
                 enable_twitter=state.enable_twitter,
-                enable_reddit=state.enable_reddit
+                enable_reddit=state.enable_reddit,
+                platforms=list(state.platforms or []),
+                research_block=research_block,
             )
             
             if progress_callback:
