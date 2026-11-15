@@ -157,6 +157,16 @@ def get_project(project_id: str):
             "error": t('api.projectNotFound', id=project_id)
         }), 404
 
+    # مشاريع قديمة: أسماء الأنواع إنجليزية. نعرّبها مرة واحدة ونحفظها،
+    # ثم تعرضها الواجهة عربية في كل مرة بعد ذلك.
+    try:
+        from ..services.ontology_generator import ensure_arabic_labels
+
+        if ensure_arabic_labels(project):
+            ProjectManager.save_project(project)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"تعذّر تعريب أسماء الأنواع: {exc}")
+
     return jsonify({
         "success": True,
         "data": project.to_dict()

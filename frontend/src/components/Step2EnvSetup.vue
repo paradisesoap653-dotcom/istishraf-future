@@ -615,7 +615,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { entityTypeLabel } from '../utils/ontologyLabels'
+import { entityTypeLabel, registerOntology } from '../utils/ontologyLabels'
 import { platformLabel, platformColor, PLATFORM_FORMS } from '../utils/platformLabels'
 import {
   prepareSimulation,
@@ -645,6 +645,10 @@ const progressMessage = ref('')
 const profiles = ref([])
 const entityTypes = ref([])
 const expectedTotal = ref(null)
+watch(() => props.projectData?.ontology, (value) => {
+  registerOntology(value)
+}, { immediate: true })
+
 const simulationConfig = ref(null)
 const researchSummary = ref('')
 

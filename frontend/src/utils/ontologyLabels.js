@@ -66,7 +66,20 @@ export const ENTITY_TYPE_AR = {
   Neighborhood: 'حي',
   Product: 'منتج',
   Currency: 'عملة',
-  Service: 'خدمة'
+  Service: 'خدمة',
+  Rider: 'راكب',
+  Passenger: 'راكب',
+  Driver: 'سائق',
+  TaxiDriver: 'سائق تاكسي',
+  RikshaDriver: 'سائق ركشة',
+  TukTukDriver: 'سائق ركشة',
+  VehicleOwner: 'صاحب مركبة',
+  DriverAssociation: 'جمعية سائقين',
+  Customer: 'عميل',
+  Platform: 'منصّة',
+  App: 'تطبيق',
+  Regulator: 'جهة تنظيم',
+  Association: 'جمعية'
 }
 
 export const RELATION_TYPE_AR = {
@@ -100,7 +113,38 @@ export const RELATION_TYPE_AR = {
   TEACHES: 'يدرّس',
   STUDIES_AT: 'يدرس في',
   TREATS: 'يعالج',
-  RELATED_TO: 'مرتبط بـ'
+  RELATED_TO: 'مرتبط بـ',
+  REQUESTS_RIDE: 'يطلب مشوارًا',
+  ACCEPTS_RIDE: 'يقبل المشوار',
+  EMPLOYED_BY: 'يعمل لدى',
+  MEMBER_OF: 'عضو في',
+  OWNS_VEHICLE: 'يملك مركبة',
+  PAYS_COMMISSION: 'يدفع عمولة',
+  REGULATED_BY: 'تنظّمه جهة',
+  COMPLAINS_ABOUT: 'يشتكي من',
+  SETS_PRICE: 'يحدّد السعر',
+  USES_PLATFORM: 'يستخدم منصّة'
+}
+
+// أسماء عربية تأتي من الخادم (label_ar) أو تُتعلَّم من مخطط المشروع لحظة فتحه.
+// الهدف: حتى رؤوس الشبكة والمخطط تستعمل العربي نفسه الذي في أعلى الصفحة.
+const dynamicLabels = {
+  entities: {},
+  relations: {}
+}
+
+export function registerOntology(ontology) {
+  if (!ontology || typeof ontology !== 'object') return
+  for (const item of (ontology.entity_types || [])) {
+    if (item && item.name && (item.label_ar || '').trim()) {
+      dynamicLabels.entities[item.name] = item.label_ar.trim()
+    }
+  }
+  for (const item of (ontology.edge_types || [])) {
+    if (item && item.name && (item.label_ar || '').trim()) {
+      dynamicLabels.relations[item.name] = item.label_ar.trim()
+    }
+  }
 }
 
 function normalizeKey(value) {
@@ -126,23 +170,25 @@ function lookup(map, name) {
 /** الاسم العربي لنوع كيان: label_ar من الخادم ← القاموس ← الاسم الأصلي */
 export function entityTypeLabel(item) {
   if (typeof item === 'string') {
-    return lookup(ENTITY_TYPE_AR, item) || item
+    return lookup(ENTITY_TYPE_AR, item) || dynamicLabels.entities[item] || item
   }
   if (!item) return ''
   const fromServer = (item.label_ar || item.labelAr || '').trim()
   if (fromServer) return fromServer
-  return lookup(ENTITY_TYPE_AR, item.name) || item.name || ''
+  return lookup(ENTITY_TYPE_AR, item.name) ||
+    dynamicLabels.entities[item.name] || item.name || ''
 }
 
 /** الاسم العربي لنوع علاقة */
 export function relationTypeLabel(item) {
   if (typeof item === 'string') {
-    return lookup(RELATION_TYPE_AR, item) || item.replace(/_/g, ' ')
+    return lookup(RELATION_TYPE_AR, item) || dynamicLabels.relations[item] || item.replace(/_/g, ' ')
   }
   if (!item) return ''
   const fromServer = (item.label_ar || item.labelAr || '').trim()
   if (fromServer) return fromServer
-  return lookup(RELATION_TYPE_AR, item.name) || String(item.name || '').replace(/_/g, ' ')
+  return lookup(RELATION_TYPE_AR, item.name) ||
+    dynamicLabels.relations[item.name] || String(item.name || '').replace(/_/g, ' ')
 }
 
 /** نص إنجليزي يبقى للعرض الثانوي (مفتاح تقني صغير تحت العربي) */

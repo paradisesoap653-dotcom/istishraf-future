@@ -193,7 +193,7 @@ import { computed, ref, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { createSimulation } from '../api/simulation'
-import { entityTypeLabel, relationTypeLabel } from '../utils/ontologyLabels'
+import { entityTypeLabel, relationTypeLabel, registerOntology } from '../utils/ontologyLabels'
 
 const router = useRouter()
 const { t } = useI18n()
@@ -247,6 +247,10 @@ const handleEnterEnvSetup = async () => {
     creatingSimulation.value = false
   }
 }
+
+watch(() => props.projectData?.ontology, (value) => {
+  registerOntology(value)
+}, { immediate: true })
 
 const selectOntologyItem = (item, type) => {
   selectedOntologyItem.value = { ...item, itemType: type }

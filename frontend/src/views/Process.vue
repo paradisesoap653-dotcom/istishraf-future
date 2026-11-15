@@ -417,7 +417,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { generateOntology, getProject, buildGraph, getTaskStatus, getGraphData } from '../api/graph'
 import { getPendingUpload, clearPendingUpload } from '../store/pendingUpload'
-import { entityTypeLabel, relationTypeLabel } from '../utils/ontologyLabels'
+import { entityTypeLabel, relationTypeLabel, registerOntology } from '../utils/ontologyLabels'
 import * as d3 from 'd3'
 
 const route = useRoute()
@@ -459,6 +459,11 @@ const statusText = computed(() => {
   if (currentPhase.value === 0) return '本体生成中'
   return '初始化中'
 })
+
+watch(() => projectData.value?.ontology, (value) => {
+  // نتعلّم الأسماء العربية من مخطط المشروع ليعرضها المخطط نفسه
+  registerOntology(value)
+}, { immediate: true })
 
 const entityTypes = computed(() => {
   if (!graphData.value?.nodes) return []

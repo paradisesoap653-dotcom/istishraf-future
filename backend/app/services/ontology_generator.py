@@ -747,3 +747,92 @@ class OntologyGenerator:
         code_lines.append('}')
         
         return '\n'.join(code_lines)
+
+
+# ═══════════════════════════════════════════════════════════════
+# تعريب أسماء الأنواع للمشاريع القديمة
+# ═══════════════════════════════════════════════════════════════
+
+_LABEL_PROMPT = """أمامك أسماء أنواع كيانات وعلاقات في مخطط معرفي (بالإنجليزية، لأنها مفاتيح تقنية).
+أعطني لكل اسم مقابلًا عربيًا قصيرًا طبيعيًا كما يقوله الناس.
+
+قواعد:
+- الكيانات: اسم الفاعل أو الصفة («سائق ركشة»، «راكب»، «جمعية سائقين»).
+- العلاقات: فعل قصير («يطلب مشوارًا»، «يعمل لدى»، «عضو في»).
+- ١-٣ كلمات، بلا شرح، بلا نقاط، بلا أي حرف لاتيني.
+- لا تكرّر الاسم الإنجليزي، ولا تكتب ترجمة حرفية باردة إن كان في العربية تعبير أطبيع.
+
+الأسماء:
+{names}
+
+أعد JSON فقط:
+{{"labels": {{"EntityName": "الاسم العربي", "RELATION_NAME": "العلاقة بالعربية"}}}}"""
+
+
+def _has_arabic(text: str) -> bool:
+    return any('\u0600' <= ch <= '\u06FF' for ch in (text or ''))
+
+
+def ensure_arabic_labels(project) -> bool:
+    """يملأ label_ar (ووصفًا عربيًا) للأنواع الناقصة في مشروع قائم.
+
+    المشاريع المولّدة قبل إضافة الحقل ما زالت إنجليزية كلها، وهذه الدالة
+    تعرّبها مرة واحدة وتُحفظ النتيجة، فلا تتكرر الترجمة في كل فتح.
+    ترجع True إذا تغيّر شيء (فيتوجّب حفظ المشروع).
+    """
+    ontology = getattr(project, 'ontology', None)
+    if not isinstance(ontology, dict):
+        return False
+
+    entities = [e for e in (ontology.get('entity_types') or []) if isinstance(e, dict)]
+    edges = [e for e in (ontology.get('edge_types') or []) if isinstance(e, dict)]
+    missing = [
+        item.get('name') for item in entities + edges
+        if item.get('name') and not _has_arabic(item.get('label_ar') or '')
+    ]
+    if not missing:
+        return False
+
+    labels: Dict[str, str] = {}
+    try:
+        from ..utils.llm_client import LLMClient
+
+        resp = LLMClient().chat_json(
+            messages=[
+                {'role': 'system', 'content': 'أجب بـ JSON صالح فقط.'},
+                {'role': 'user', 'content': _LABEL_PROMPT.format(
+                    names='\n'.join(f'- {name}' for name in missing[:40])
+                )},
+            ],
+            temperature=0.2,
+            max_tokens=1200,
+        )
+        raw = (resp or {}).get('labels') if isinstance(resp, dict) else None
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                if isinstance(value, str) and _has_arabic(value):
+                    labels[str(key).strip()] = value.strip()[:40]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"تعذر تعريب أسماء الأنواع: {exc}")
+
+    if not labels:
+        return False
+
+    changed = False
+    for item in entities + edges:
+        name = item.get('name')
+        if not name:
+            continue
+        current = item.get('label_ar') or ''
+        if _has_arabic(current):
+            continue
+        arabic = labels.get(name)
+        if not arabic:
+            continue
+        item['label_ar'] = arabic
+        description = item.get('description') or ''
+        if not _has_arabic(description):
+            item['description'] = arabic
+        changed = True
+
+    return changed
