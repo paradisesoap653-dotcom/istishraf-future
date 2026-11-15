@@ -77,9 +77,20 @@ def _run_report_generate(payload: Dict[str, Any], ctx: Dict[str, Any]) -> None:
         unregister_graph_reader(graph_id, report_id)
 
 
+def _run_simulation(payload: Dict[str, Any], ctx: Dict[str, Any]) -> None:
+    from .services.simulation_runner import SimulationRunner
+
+    SimulationRunner.run_lightweight_simulation(
+        payload["simulation_id"],
+        payload.get("platform") or "parallel",
+        payload.get("max_rounds"),
+    )
+
+
 HANDLERS: Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], None]] = {
     "graph_build": _run_graph_build,
     "report_generate": _run_report_generate,
+    "simulation_run": _run_simulation,
 }
 
 

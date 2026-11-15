@@ -477,6 +477,91 @@ class SimulationRunner:
         cls._run_states[state.simulation_id] = state
     
     @classmethod
+    @classmethod
+    def run_lightweight_simulation(cls, simulation_id: str, platform: str = "",
+                                   max_rounds: int = None) -> None:
+        """المحرّك السحابي الخفيف: يولّد المحاكاة ويحدّث حالتها.
+
+        كان يعمل داخل خيط على Vercel فيُقتل عند انتهاء الطلب قبل إكمال الجولات
+        (فتظل الحالة «قيد التشغيل» بلا أفعال). صار قابلًا للاستدعاء من العامل
+        طويل العمر، مع بقاء المسار المباشر كاحتياط.
+        """
+        if not platform:
+            platform = "parallel"
+        state = cls.get_run_state(simulation_id)
+        if state is None:
+            raise ValueError(f"حالة التشغيل غير موجودة: {simulation_id}")
+        sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+        from .serverless_sim import run_serverless_simulation
+
+        try:
+            state.runner_status = RunnerStatus.RUNNING
+            from . import platforms as _pr
+            for plat_key in _pr.normalize(platform):
+                if plat_key not in state.platforms:
+                    state.platforms.append(plat_key)
+                state.platform_running[plat_key] = True
+            state.twitter_running = platform in ("twitter", "parallel")
+            state.reddit_running = platform in ("reddit", "parallel")
+            cls._save_run_state(state)
+            cls._sync_simulation_status(simulation_id, RunnerStatus.RUNNING)
+
+            summary = run_serverless_simulation(
+                sim_dir=sim_dir,
+                platform=platform,
+                max_rounds=max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS,
+            )
+            done_rounds = summary.get("rounds_completed", 3)
+            state.current_round = done_rounds
+            state.total_rounds = done_rounds
+            state.simulated_hours = done_rounds
+            state.twitter_current_round = done_rounds
+            state.reddit_current_round = done_rounds
+            # عدّادات حقيقية لكل منصّة (فيسبوك/واتساب/تيك توك/تويتر...)
+            per_platform = summary.get("platform_actions") or {}
+            used_platforms = summary.get("platforms") or list(per_platform.keys())
+            for plat_key in used_platforms:
+                if plat_key not in state.platforms:
+                    state.platforms.append(plat_key)
+                state.platform_rounds[plat_key] = done_rounds
+                state.platform_hours[plat_key] = done_rounds
+                state.platform_actions[plat_key] = int(per_platform.get(plat_key, 0) or 0)
+                state.platform_running[plat_key] = False
+                state.platform_completed[plat_key] = True
+            state.twitter_actions_count = state.platform_actions.get('twitter', 0)
+            state.reddit_actions_count = state.platform_actions.get('reddit', 0)
+            # القديمة: الأولى كانت تُظهر «المنصّة العامة» والثانية «المجتمع»؛
+            # لم نعد نحتاج هذا التجميع لأن كل منصّة تُعرض باسمها.
+            state.total_actions_count = summary.get("total_actions", 0)
+            state.twitter_running = False
+            state.reddit_running = False
+            state.runner_status = RunnerStatus.COMPLETED
+            state.completed_at = datetime.now().isoformat()
+            if cls._graph_memory_enabled.get(simulation_id, False):
+                try:
+                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                except Exception:
+                    pass
+                cls._graph_memory_enabled.pop(simulation_id, None)
+            with cls._finalization_lock(simulation_id):
+                cls._save_run_state(state)
+                cls._sync_simulation_status(simulation_id, RunnerStatus.COMPLETED)
+        except Exception as sim_err:
+            logger.error(f"Serverless simulation error: {sim_err}")
+            state.runner_status = RunnerStatus.FAILED
+            state.twitter_running = False
+            state.reddit_running = False
+            state.error = str(sim_err)
+            if cls._graph_memory_enabled.get(simulation_id, False):
+                try:
+                    ZepGraphMemoryManager.stop_updater(simulation_id)
+                except Exception:
+                    pass
+                cls._graph_memory_enabled.pop(simulation_id, None)
+            with cls._finalization_lock(simulation_id):
+                cls._save_run_state(state)
+                cls._sync_simulation_status(simulation_id, RunnerStatus.FAILED, state.error)
+
     def start_simulation(
         cls,
         simulation_id: str,
@@ -574,77 +659,36 @@ class SimulationRunner:
         import importlib.util
         use_serverless_engine = Config.IS_SERVERLESS or (importlib.util.find_spec("oasis") is None)
         if use_serverless_engine:
-            from .serverless_sim import run_serverless_simulation
+            # الأفضل: نفّذ المحاكاة في العامل طويل العمر (حتى ١٢ دقيقة) بدل خيط
+            # داخل طلب Vercel يُقتل عند انتهاء الطلب — وهو سبب بقاء المحاكاة
+            # «قيد التشغيل» بلا أي تفاعل بعد زيادة عدد الجولات.
+            queued = False
+            try:
+                from ..models import job_queue as _jobs
 
-            def _exec_lightweight():
-                try:
-                    state.runner_status = RunnerStatus.RUNNING
-                    from . import platforms as _pr
-                    for plat_key in _pr.normalize(platform):
-                        if plat_key not in state.platforms:
-                            state.platforms.append(plat_key)
-                        state.platform_running[plat_key] = True
-                    state.twitter_running = platform in ("twitter", "parallel")
-                    state.reddit_running = platform in ("reddit", "parallel")
-                    cls._save_run_state(state)
-                    cls._sync_simulation_status(simulation_id, RunnerStatus.RUNNING)
-
-                    summary = run_serverless_simulation(
-                        sim_dir=sim_dir,
-                        platform=platform,
-                        max_rounds=max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS,
+                if _jobs.should_queue():
+                    job_id = _jobs.enqueue(
+                        "simulation_run",
+                        {
+                            "simulation_id": simulation_id,
+                            "platform": platform,
+                            "max_rounds": max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS,
+                        },
+                        dedupe_key=f"simulation_run:{simulation_id}",
                     )
-                    done_rounds = summary.get("rounds_completed", 3)
-                    state.current_round = done_rounds
-                    state.total_rounds = done_rounds
-                    state.simulated_hours = done_rounds
-                    state.twitter_current_round = done_rounds
-                    state.reddit_current_round = done_rounds
-                    # عدّادات حقيقية لكل منصّة (فيسبوك/واتساب/تيك توك/تويتر...)
-                    per_platform = summary.get("platform_actions") or {}
-                    used_platforms = summary.get("platforms") or list(per_platform.keys())
-                    for plat_key in used_platforms:
-                        if plat_key not in state.platforms:
-                            state.platforms.append(plat_key)
-                        state.platform_rounds[plat_key] = done_rounds
-                        state.platform_hours[plat_key] = done_rounds
-                        state.platform_actions[plat_key] = int(per_platform.get(plat_key, 0) or 0)
-                        state.platform_running[plat_key] = False
-                        state.platform_completed[plat_key] = True
-                    state.twitter_actions_count = state.platform_actions.get('twitter', 0)
-                    state.reddit_actions_count = state.platform_actions.get('reddit', 0)
-                    # القديمة: الأولى كانت تُظهر «المنصّة العامة» والثانية «المجتمع»؛
-                    # لم نعد نحتاج هذا التجميع لأن كل منصّة تُعرض باسمها.
-                    state.total_actions_count = summary.get("total_actions", 0)
-                    state.twitter_running = False
-                    state.reddit_running = False
-                    state.runner_status = RunnerStatus.COMPLETED
-                    state.completed_at = datetime.now().isoformat()
-                    if cls._graph_memory_enabled.get(simulation_id, False):
-                        try:
-                            ZepGraphMemoryManager.stop_updater(simulation_id)
-                        except Exception:
-                            pass
-                        cls._graph_memory_enabled.pop(simulation_id, None)
-                    with cls._finalization_lock(simulation_id):
-                        cls._save_run_state(state)
-                        cls._sync_simulation_status(simulation_id, RunnerStatus.COMPLETED)
-                except Exception as sim_err:
-                    logger.error(f"Serverless simulation error: {sim_err}")
-                    state.runner_status = RunnerStatus.FAILED
-                    state.twitter_running = False
-                    state.reddit_running = False
-                    state.error = str(sim_err)
-                    if cls._graph_memory_enabled.get(simulation_id, False):
-                        try:
-                            ZepGraphMemoryManager.stop_updater(simulation_id)
-                        except Exception:
-                            pass
-                        cls._graph_memory_enabled.pop(simulation_id, None)
-                    with cls._finalization_lock(simulation_id):
-                        cls._save_run_state(state)
-                        cls._sync_simulation_status(simulation_id, RunnerStatus.FAILED, state.error)
+                    if job_id:
+                        queued = True
+                        logger.info("أُضيفت المحاكاة %s إلى طابور العامل", simulation_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("تعذر إضافة المحاكاة إلى الطابور: %s", exc)
 
+            if not queued:
+                try:
+                    cls.run_lightweight_simulation(
+                        simulation_id, platform, max_rounds or Config.OASIS_DEFAULT_MAX_ROUNDS
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("فشل تنفيذ المحاكاة السحابية: %s", exc)
             if Config.IS_SERVERLESS:
                 _exec_lightweight()
             else:

@@ -7,6 +7,7 @@
 import os
 import json
 import sqlite3
+import time
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
@@ -461,7 +462,14 @@ def run_serverless_simulation(
     rounds_data: List[Dict[str, Any]] = []
     next_round = 1
     batch_size = 2
+    started_at = time.monotonic()
+    # سقف زمني: لو نُفِّذت المحاكاة داخل طلب Vercel (بدون عامل) فلا نتجاوز
+    # المهلة ونُبقي ما تولّد بدل أن يُقتل الطلب ويضيع كل شيء.
+    time_budget = 230.0
     while next_round <= rounds:
+        if time.monotonic() - started_at > time_budget:
+            logger.warning("انتهت ميزانية الوقت بعد %s جولة؛ يُحتفظ بالمولَّد", next_round - 1)
+            break
         chunk = min(batch_size, rounds - next_round + 1)
         part: Any = None
         try:
