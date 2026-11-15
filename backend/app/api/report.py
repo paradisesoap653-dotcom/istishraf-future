@@ -930,6 +930,28 @@ def get_report_progress(report_id: str):
         }), 500
 
 
+@report_bp.route('/<report_id>/grounding', methods=['GET'])
+def get_report_grounding(report_id):
+    """المعطيات التي دخلت إلى النموذج فعلًا (تشخيص جودة التقرير)."""
+    report = ReportManager.get_report(report_id)
+    if not report:
+        return jsonify({'success': False, 'error': 'التقرير غير موجود'}), 404
+    user = get_current_user()
+    if user and report.user_id and report.user_id != user.get('id') and user.get('role') != 'admin':
+        return jsonify({'success': False, 'error': 'غير مصرّح'}), 403
+    try:
+        path = os.path.join(
+            ReportManager._get_report_folder(report_id), 'grounding.txt'
+        )
+        text = storage.read_text_fresh(path) or ''
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({'success': False, 'error': str(exc)[:200]}), 500
+    return jsonify({
+        'success': True,
+        'data': {'report_id': report_id, 'chars': len(text), 'grounding': text},
+    })
+
+
 @report_bp.route('/<report_id>/sections', methods=['GET'])
 def get_report_sections(report_id: str):
     """
