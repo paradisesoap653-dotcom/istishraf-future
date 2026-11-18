@@ -1,36 +1,38 @@
 <template>
   <div class="simulation-interaction-container">
-    <!-- شريط منصات التواصل العلوي مع السحب الأفقي السلس -->
-    <div class="platforms-scroll-container">
-      <div class="platform-card-item">
-        <span class="platform-dot" style="background: #1877F2;"></span>
-        <span class="platform-name">فيسبوك</span>
-        <span class="platform-stats">الجولة 5/5</span>
-      </div>
-      <div class="platform-card-item">
-        <span class="platform-dot" style="background: #FF4500;"></span>
-        <span class="platform-name">ريديت</span>
-        <span class="platform-stats">الجولة 5/5</span>
-      </div>
-      <div class="platform-card-item">
-        <span class="platform-dot" style="background: #1DA1F2;"></span>
-        <span class="platform-name">تويتر (إكس)</span>
-        <span class="platform-stats">الجولة 5/5</span>
-      </div>
-      <div class="platform-card-item">
-        <span class="platform-dot" style="background: #000000;"></span>
-        <span class="platform-name">تيك توك</span>
-        <span class="platform-stats">الجولة 5/5</span>
-      </div>
-      <div class="platform-card-item">
-        <span class="platform-dot" style="background: #25D366;"></span>
-        <span class="platform-name">واتساب</span>
-        <span class="platform-stats">الجولة 5/5</span>
+    <!-- حاوية منصات التواصل المستقلة مع السحب الأفقي -->
+    <div class="platforms-scroll-wrapper">
+      <div class="platforms-scroll-container">
+        <div class="platform-card-item">
+          <span class="platform-dot" style="background: #1877F2;"></span>
+          <span class="platform-name">فيسبوك</span>
+          <span class="platform-stats">الجولة 5/5</span>
+        </div>
+        <div class="platform-card-item">
+          <span class="platform-dot" style="background: #FF4500;"></span>
+          <span class="platform-name">ريديت</span>
+          <span class="platform-stats">الجولة 5/5</span>
+        </div>
+        <div class="platform-card-item">
+          <span class="platform-dot" style="background: #1DA1F2;"></span>
+          <span class="platform-name">تويتر (إكس)</span>
+          <span class="platform-stats">الجولة 5/5</span>
+        </div>
+        <div class="platform-card-item">
+          <span class="platform-dot" style="background: #000000;"></span>
+          <span class="platform-name">تيك توك</span>
+          <span class="platform-stats">الجولة 5/5</span>
+        </div>
+        <div class="platform-card-item">
+          <span class="platform-dot" style="background: #25D366;"></span>
+          <span class="platform-name">واتساب</span>
+          <span class="platform-stats">الجولة 5/5</span>
+        </div>
       </div>
     </div>
 
-    <!-- رسالة الاكتمال وزر توليد التقرير المفعل -->
-    <div class="action-panel">
+    <!-- حاوية زر التقرير ومنطقة الإجراءات منفصلة تماماً -->
+    <div class="action-panel-section">
       <div class="completion-notice">
         اكتملت الجولات بنجاح. يمكنك الانتقال للتقرير الآن.
       </div>
@@ -63,9 +65,16 @@ const handleGenerateReport = () => {
   gap: 16px;
   padding: 16px;
   background: #FAFAFA;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* تفعيل السحب الأفقي الناعم لشريط منصات التواصل */
+/* فصل حاوية المنصات لتعمل بسلاسة دون تداخل */
+.platforms-scroll-wrapper {
+  width: 100%;
+  overflow: hidden;
+}
+
 .platforms-scroll-container {
   display: flex !important;
   overflow-x: auto !important;
@@ -87,7 +96,7 @@ const handleGenerateReport = () => {
 }
 
 .platform-card-item {
-  flex: 0 0 auto !important;
+  flex: 0 0 130px !important;
   min-width: 130px !important;
   background: #FFFFFF;
   border: 1px solid #E2E8F0;
@@ -97,6 +106,7 @@ const handleGenerateReport = () => {
   flex-direction: column;
   gap: 4px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+  box-sizing: border-box;
 }
 
 .platform-dot {
@@ -111,6 +121,9 @@ const handleGenerateReport = () => {
   font-size: 13px;
   font-weight: 600;
   color: #1E293B;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .platform-stats {
@@ -119,31 +132,34 @@ const handleGenerateReport = () => {
   color: #64748B;
 }
 
-.action-panel {
+/* فصل منطقة الأزرار وتأمين عملها بمعزل عن المنصات */
+.action-panel-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  margin-top: 4px;
+  box-sizing: border-box;
 }
 
 .completion-notice {
   font-size: 13px;
   color: #047857;
   background: #ECFDF5;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 6px;
   text-align: center;
   font-weight: 500;
   border: 1px solid #A7F3D0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .action-btn.primary, button.generate-report-btn {
   background: #000 !important;
   color: #FFF !important;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
-  padding: 14px 24px;
+  padding: 16px 24px;
   border-radius: 8px;
   border: none;
   cursor: pointer !important;
@@ -152,6 +168,7 @@ const handleGenerateReport = () => {
   width: 100%;
   text-align: center;
   box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  box-sizing: border-box;
 }
 
 .action-btn.primary:hover, button.generate-report-btn:hover {
