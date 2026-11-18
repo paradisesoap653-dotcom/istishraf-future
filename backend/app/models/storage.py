@@ -84,6 +84,12 @@ def _pool_instance():
                 min_size=1,
                 max_size=4,
                 timeout=10,
+                # A warm serverless instance may retain sockets that Neon or
+                # an intermediary closed while idle. Validate on checkout,
+                # before handing a connection to authentication or a writer.
+                # The pool discards failed connections and replaces them within
+                # its timeout; never blindly replay a write after an error.
+                check=ConnectionPool.check_connection,
                 kwargs={"autocommit": True},
                 open=True,
             )
