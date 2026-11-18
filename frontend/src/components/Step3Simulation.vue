@@ -2,7 +2,7 @@
   <div class="simulation-panel">
     <!-- Top Control Bar -->
     <div class="control-bar">
-      <div class="status-group">
+      <div class="status-group" tabindex="0" role="region" aria-label="منصات المحاكاة — اسحب أفقياً لعرض البقية">
         <!-- بطاقة لكل منصّة شاركت في المحاكاة (فيسبوك/واتساب/تيك توك/تويتر...) -->
         <div
           v-for="card in platformCards"
@@ -55,6 +55,11 @@
       </div>
     </div>
 
+    <div v-if="isGeneratingReport" class="report-progress" role="status" aria-live="polite">
+      <strong>جارٍ طلب التقرير… {{ reportElapsedSeconds }} ثانية</strong>
+      <p v-if="reportElapsedSeconds < 30">قد يستغرق التوليد عدة دقائق. انتظر ولا تعِد الضغط أو تحديث الصفحة.</p>
+      <p v-else>ما زلنا ننتظر رد الخادم. اكتمال جولات المنصات لا يعني اكتمال التقرير؛ لا تغلق الصفحة الآن.</p>
+    </div>
     <p v-if="reportError" class="report-error" role="alert">{{ reportError }}</p>
 
     <!-- Main Content: Dual Timeline -->
@@ -279,6 +284,12 @@ const router = useRouter()
 // State
 const isGeneratingReport = ref(false)
 const reportError = ref('')
+const reportElapsedSeconds = ref(0)
+let reportWaitTimer = null
+const stopReportWaitTimer = () => {
+  if (reportWaitTimer !== null) clearInterval(reportWaitTimer)
+  reportWaitTimer = null
+}
 const canGenerateReport = computed(() =>
   ['completed', 'stopped'].includes(runStatus.value.runner_status)
 )
@@ -646,6 +657,12 @@ const handleNextStep = async () => {
   if (!canGenerateReport.value) return
 
   isGeneratingReport.value = true
+  reportElapsedSeconds.value = 0
+  const startedAt = Date.now()
+  stopReportWaitTimer()
+  reportWaitTimer = setInterval(() => {
+    reportElapsedSeconds.value = Math.floor((Date.now() - startedAt) / 1000)
+  }, 1000)
   addLog(t('log.startingReportGen'))
   try {
     const res = await generateReport({ simulation_id: props.simulationId })
@@ -656,10 +673,14 @@ const handleNextStep = async () => {
     addLog(t('log.reportGenTaskStarted', { reportId }))
     await router.push({ name: 'Report', params: { reportId } })
   } catch (err) {
-    reportError.value = t('log.reportGenFailed', { error: err.message })
+    const timedOut = err.code === 'ECONNABORTED' || err.response?.status === 504
+    reportError.value = timedOut
+      ? 'انتهت مهلة انتظار الخادم، وليس بالضرورة أن التوليد توقف. قد يستمر الطلب على الخادم؛ لا تبدأ طلباً آخر فوراً. افحص سجلات الخادم وحالة التقرير أولاً.'
+      : t('log.reportGenFailed', { error: err.message })
     addLog(reportError.value)
     emit('update-status', 'error')
   } finally {
+    stopReportWaitTimer()
     isGeneratingReport.value = false
   }
 }
@@ -707,11 +728,22 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopReportWaitTimer()
   stopPolling()
 })
 </script>
 
 <style scoped>
+.report-progress {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  border-bottom: 1px solid #bfdbfe;
+  font-size: 13px;
+  direction: rtl;
+}
+.report-progress p { margin: 6px 0 0; line-height: 1.7; }
 .report-error {
   margin: 12px;
   padding: 12px;
@@ -738,13 +770,31 @@ onUnmounted(() => {
   align-items: center;
   border-bottom: 1px solid #EAEAEA;
   z-index: 10;
-  height: 64px;
+  min-height: 64px;
+  height: auto;
+  flex-shrink: 0;
+  gap: 12px;
+  min-width: 0;
 }
 
 .status-group {
   display: flex;
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: 100%;
   gap: 12px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  scrollbar-width: thin;
 }
+.status-group::-webkit-scrollbar { height: 6px; }
+.status-group::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 6px; }
+.status-group > .platform-status { flex: 0 0 170px; }
 
 /* Platform Status Cards */
 .platform-status {
@@ -927,6 +977,10 @@ onUnmounted(() => {
     flex-wrap: wrap;
     gap: 8px;
     padding: 10px 12px;
+  }
+  .status-group {
+    flex: 0 1 100%;
+    width: 100%;
   }
   .action-controls {
     width: 100%;
