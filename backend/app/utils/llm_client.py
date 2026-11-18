@@ -250,7 +250,10 @@ class LLMClient:
         
         self.client = OpenAI(
             api_key=self.api_key,
-            base_url=self.base_url
+            base_url=self.base_url,
+            # Bound each provider call below the serverless request deadline.
+            timeout=45.0 if Config.IS_SERVERLESS else 120.0,
+            max_retries=0,
         )
 
         # قائمة المرشّحين: النموذج الأساسي ثم النماذج/المزوّدون البديلون.
@@ -304,7 +307,12 @@ class LLMClient:
                 continue
             try:
                 candidates.append({
-                    "client": OpenAI(api_key=key, base_url=base),
+                    "client": OpenAI(
+                        api_key=key,
+                        base_url=base,
+                        timeout=45.0 if Config.IS_SERVERLESS else 120.0,
+                        max_retries=0,
+                    ),
                     "model": model,
                     "label": f"{model} @ {base}",
                     "extra": item.get("extra"),
