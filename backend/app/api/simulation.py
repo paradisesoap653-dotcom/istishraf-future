@@ -1954,6 +1954,14 @@ def get_simulation_research(simulation_id: str):
                 "topic_news": (bundle.get("topic") or {}).get("news") or [],
                 "sudan_news": (bundle.get("pulse") or {}).get("news") or [],
                 "errors": bundle.get("errors") or [],
+                # شفافية الأدلة: ما نُفِّذ فعلًا، وما سُحب فعلًا، وما فُحص فعلًا
+                "topic_queries": (bundle.get("topic") or {}).get("queries") or [],
+                "executed_angles": (bundle.get("topic") or {}).get("executed_angles") or [],
+                "skipped_angles": (bundle.get("topic") or {}).get("skipped_angles") or [],
+                "search_report": (bundle.get("topic") or {}).get("search_report") or {},
+                "pages": (bundle.get("topic") or {}).get("pages") or [],
+                "verification": (bundle.get("topic") or {}).get("verification") or {},
+                "evidence_ledger": (bundle.get("topic") or {}).get("evidence_ledger") or {},
             },
         })
     except Exception as exc:  # noqa: BLE001
@@ -1980,11 +1988,65 @@ def preview_web_research():
                 "facts": bundle.get("facts") or [],
                 "news": bundle.get("news") or [],
                 "errors": bundle.get("errors") or [],
+                "queries": bundle.get("queries") or [],
+                "executed_angles": bundle.get("executed_angles") or [],
+                "skipped_angles": bundle.get("skipped_angles") or [],
+                "search_report": bundle.get("search_report") or {},
+                "pages": [
+                    {key: value for key, value in page.items() if key != "text"}
+                    for page in (bundle.get("pages") or [])
+                ],
+                "verification": bundle.get("verification") or {},
+                "evidence_ledger": bundle.get("evidence_ledger") or {},
             },
         })
     except Exception as exc:  # noqa: BLE001
         logger.error(f"تعذر البحث التجريبي: {exc}")
         return jsonify({"success": False, "error": "تعذر البحث الآن"}), 500
+
+
+@simulation_bp.route('/research/verify', methods=['POST'])
+def verify_research_claims():
+    """فحص لفظي لِما كتبناه مقابل ما سحبناه فعلًا: يكشف عدم التطابق ولا يثبت الصحة."""
+    try:
+        from ..services import claim_check, web_research
+
+        payload = request.get_json(silent=True) or {}
+        text = (payload.get('text') or '').strip()
+        if not text:
+            return jsonify({"success": False, "error": "أرسل النص الذي تريد فحصه"}), 400
+        try:
+            max_claims = max(1, min(int(payload.get('max_claims') or 8), 20))
+        except (TypeError, ValueError):
+            max_claims = 8
+
+        sources = []
+        simulation_id = (payload.get('simulation_id') or '').strip()
+        if simulation_id:
+            sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+            bundle = web_research.load(sim_dir) or {}
+            topic = bundle.get('topic') or {}
+            page_text = {
+                page.get('url'): page.get('text')
+                for page in (topic.get('pages') or [])
+                if page.get('status') == 'fetched' and page.get('text')
+            }
+            for source in ((topic.get('evidence_ledger') or {}).get('sources') or []):
+                entry = dict(source)
+                if entry.get('url') in page_text:
+                    entry['content_level'] = 'full_page'
+                    entry['text'] = page_text[entry['url']]
+                sources.append(entry)
+
+        result = claim_check.check_report(text, sources, max_claims=max_claims)
+        result['simulation_id'] = simulation_id or None
+        result['sources_available'] = len(sources)
+        if not sources:
+            result['warning'] = 'لا مصادر محفوظة لهذه المحاكاة: كل الجُمل ستكون «غير قابلة للفحص».'
+        return jsonify({"success": True, "data": result})
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"تعذر فحص الادعاءات: {exc}")
+        return jsonify({"success": False, "error": "تعذر فحص النص الآن"}), 500
 
 
 def _reconcile_run_state(simulation_id: str, run_state):

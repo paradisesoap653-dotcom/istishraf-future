@@ -249,6 +249,15 @@ class WiringTests(unittest.TestCase):
         self.assertIn('CACHE_VERSION', source)
         self.assertNotIn("topic::evidence-v1", source)
 
+    def test_api_exposes_what_was_executed_and_fetched(self):
+        api = (ROOT / 'backend/app/api/simulation.py').read_text()
+        self.assertIn("@simulation_bp.route('/research/verify'", api)
+        self.assertIn('claim_check.check_report', api)
+        for key in ('"search_report"', '"skipped_angles"', '"pages"', '"verification"'):
+            self.assertIn(key, api)
+        # لا يُرسل نص الصفحات كاملًا في قائمة الحزمة (حجم وكشف بلا داع)
+        self.assertIn('if key != "text"', api)
+
 
 if __name__ == '__main__':
     unittest.main()
