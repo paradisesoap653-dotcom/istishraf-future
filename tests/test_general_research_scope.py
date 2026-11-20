@@ -12,9 +12,9 @@ class ScopeTests(unittest.TestCase):
         tree.body = [n for n in tree.body if not (isinstance(n, ast.ImportFrom) and n.level)]
         policy = {}
         exec(compile((ROOT / 'backend/app/services/research_integrity.py').read_text(), 'policy', 'exec'), policy)
-        self.ns = {'__name__': 'scope_test', 'serp_lookup': Mock(), **{
-            key: policy[key] for key in ('clean_project_title', 'build_evidence_ledger', 'plan_queries', 'EVIDENCE_POLICY')
-        }}
+        self.ns = {'__name__': 'scope_test', 'serp_lookup': Mock(),
+                   'page_retrieval': Mock(), 'claim_check': Mock(),
+                   **{key: value for key, value in policy.items() if not key.startswith('_')}}
         exec(compile(tree, str(path), 'exec'), self.ns)
         self.ns['gather_topic'] = Mock(return_value={'ok': True})
         self.ns['sudan_pulse'] = Mock(return_value={'ok': True})

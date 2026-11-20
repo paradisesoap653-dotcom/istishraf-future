@@ -9,8 +9,24 @@ import hashlib
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-METHODOLOGY_VERSION = 'evidence-v1'
+METHODOLOGY_VERSION = 'evidence-v2'
 PLACEHOLDERS = {'unnamed project', 'untitled', 'untitled project', 'مشروع بدون عنوان', 'مشروع بلا عنوان'}
+
+# ميزانية البحث: عدد نداءات المزوّد المسموح بها لكل حزمة بحث.
+# كل نداء يكلّف رصيدًا حقيقيًا من حساب المزوّد، فلا يجوز أن ينمو بلا سقف.
+DEFAULT_SEARCH_BUDGET = {
+    'max_query_calls': 2,          # زوايا الموضوع (بلا الأخبار)
+    'max_news_calls': 1,           # نداء أخبار واحد على الأكثر
+    'max_results_per_call': 8,     # نتيجة لكل نداء
+    'per_call_timeout_seconds': 20.0,
+}
+
+_BUDGET_LIMITS = {
+    'max_query_calls': (1, 4),
+    'max_news_calls': (0, 2),
+    'max_results_per_call': (3, 10),
+    'per_call_timeout_seconds': (5.0, 45.0),
+}
 
 EVIDENCE_POLICY = """
 قواعد منهجية عامة ملزمة لكل بلد وموضوع:
@@ -25,6 +41,8 @@ EVIDENCE_POLICY = """
 - لا تعمم على بلد أو مهنة أو دين أو جنس، ولا تستنتج الموقف السياسي من الهوية أو الصمت.
 - افصل القناعة والقدرة والخوف والمصلحة؛ لا تفسر العجز عن المساعدة تلقائياً بضعف القيم.
 - لا تنسب قولاً مولداً إلى شخص حقيقي كتصريح له؛ الشخصيات والحوارات الاصطناعية افتراضية.
+- النص الكامل المسحوب من صفحة يثبت أن الصفحة كانت متاحة وقت السحب فقط؛ ولا يثبت صحة ما فيها.
+- مطابقة الادعاء لنص مصدر مطابقة لفظية آلية: تكشف عدم التطابق، ولا تثبت الصدق ولا تنفي الخطأ أو الاقتطاع من السياق.
 - اختر الأطراف والقيود والمؤشرات من نطاق الدراسة، لا من قائمة بلد أو مهن جاهزة.
 - حدد النطاق الزمني والجغرافي وحدود المعرفة. عند غياب الدليل صرّح بذلك ولا تملأ الفراغ بتخمين.
 """.strip()
@@ -107,3 +125,36 @@ def plan_queries(topic: str):
     return [{'angle': 'baseline', 'query': topic}] + [
         {'angle': angle, 'query': topic + suffix} for angle, suffix in suffixes
     ]
+
+
+def resolve_search_budget(overrides=None):
+    """Budget with hard clamps; unknown or invalid values fall back to defaults."""
+    budget = dict(DEFAULT_SEARCH_BUDGET)
+    for key, (low, high) in _BUDGET_LIMITS.items():
+        raw = (overrides or {}).get(key)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value != value:  # NaN
+            continue
+        budget[key] = int(min(max(value, low), high)) if isinstance(low, int) else float(min(max(value, low), high))
+    return budget
+
+
+def plan_search_queries(topic: str, budget=None):
+    """Ordered query plan with priorities; execution is capped by the budget.
+
+    Ordering is fixed by the policy, never by the topic: baseline first,
+    then primary/additional evidence, then contradicting/alternative angles.
+    Angles beyond the budget are returned by the executor as *not executed*,
+    never silently dropped.
+    """
+    budget = resolve_search_budget(budget)
+    plan = plan_queries(topic)
+    for position, step in enumerate(plan):
+        step['priority'] = position
+        step['max_results'] = budget['max_results_per_call']
+    return plan
