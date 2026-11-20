@@ -20,9 +20,10 @@ def load(name, extra=None):
 
 
 class FakeResponse:
-    def __init__(self, status=200, content_type='text/html; charset=utf-8', body=b'', url='https://example.org/a'):
+    def __init__(self, status=200, content_type='text/html; charset=utf-8', body=b'',
+                 url='https://example.org/a', location=None):
         self.status_code = status
-        self.headers = {'content-type': content_type}
+        self.headers = {'content-type': content_type, 'location': location}
         self.url = url
         self._body = body
 
@@ -48,11 +49,28 @@ class FakeClient:
         self.error = error
         self.calls = []
 
-    def stream(self, method, url):
+    def stream(self, method, url, **kwargs):
         self.calls.append(url)
         if self.error:
             raise self.error
         return FakeStream(self.response)
+
+
+class RoutingClient:
+    """عميل وهمي يعيد استجابة مختلفة لكل عنوان، ويسجّل كل عنوان طُلب فعلًا."""
+
+    def __init__(self, routes, follow_redirects=None):
+        self.routes = routes
+        self.calls = []
+        self.follow_flags = []
+
+    def stream(self, method, url, **kwargs):
+        self.calls.append(url)
+        self.follow_flags.append(kwargs.get('follow_redirects'))
+        key = str(url)
+        if key not in self.routes:
+            raise AssertionError(f'طلب غير متوقّع: {key}')
+        return FakeStream(self.routes[key])
 
 
 class RetrievalTests(unittest.TestCase):
@@ -162,6 +180,72 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn('boom', result['pages'][0]['error'])
 
 
+class RedirectSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.canonical = load('research_integrity')['canonical_source_url']
+        self.pr = load('page_retrieval', {'canonical_source_url': self.canonical})
+
+    def test_redirect_to_internal_address_is_blocked_and_never_requested(self):
+        client = RoutingClient({
+            'https://example.org/start': FakeResponse(
+                status=302, location='http://169.254.169.254/latest/meta-data/'),
+            'http://169.254.169.254/latest/meta-data/': FakeResponse(
+                body=b'secret', content_type='text/plain'),
+        })
+        record = self.pr['fetch_page']('https://example.org/start', budget={'max_pages': 1},
+                                       client=client, resolve_dns=False)
+        self.assertEqual(record['status'], 'blocked')
+        self.assertTrue(record['error'].startswith('redirect_blocked'))
+        self.assertEqual(record['text'], '')
+        self.assertEqual(client.calls, ['https://example.org/start'])
+        self.assertEqual(record['redirects'], 1)
+
+    def test_redirect_to_public_url_is_followed_and_counted(self):
+        client = RoutingClient({
+            'https://example.org/start': FakeResponse(
+                status=301, location='https://news.example/final'),
+            'https://news.example/final': FakeResponse(
+                body='نص الصفحة العامة'.encode('utf-8'), content_type='text/plain; charset=utf-8'),
+        })
+        record = self.pr['fetch_page']('https://example.org/start', budget={'max_pages': 1},
+                                       client=client, resolve_dns=False)
+        self.assertEqual(record['status'], 'fetched')
+        self.assertEqual(record['redirects'], 1)
+        self.assertEqual(client.calls, ['https://example.org/start', 'https://news.example/final'])
+        # كل طلب يجب أن يمنع httpx من تتبّع التحويل نيابةً عنّا
+        self.assertEqual(client.follow_flags, [False, False])
+
+    def test_redirect_loop_stops_as_an_error_not_a_fetch(self):
+        client = RoutingClient({
+            'https://example.org/loop': FakeResponse(
+                status=302, location='https://example.org/loop'),
+        })
+        record = self.pr['fetch_page']('https://example.org/loop',
+                                       budget={'max_pages': 1, 'max_redirects': 2},
+                                       client=client, resolve_dns=False)
+        self.assertEqual(record['status'], 'error')
+        self.assertEqual(record['error'], 'too_many_redirects')
+        self.assertEqual(record['text'], '')
+
+    def test_redirect_without_location_is_an_error(self):
+        client = RoutingClient({'https://example.org/x': FakeResponse(status=302)})
+        record = self.pr['fetch_page']('https://example.org/x', budget={'max_pages': 1},
+                                       client=client, resolve_dns=False)
+        self.assertEqual(record['status'], 'error')
+        self.assertIn('without_location', record['error'])
+
+    def test_public_pages_drops_text_and_keeps_the_rest(self):
+        pages = [{'url': 'https://example.org/a', 'status': 'fetched', 'chars': 120,
+                  'truncated': False, 'text': 'نص كامل لا يجب أن يُنشر'}]
+        published = self.pr['public_pages'](pages)
+        self.assertNotIn('text', published[0])
+        self.assertEqual(published[0]['url'], 'https://example.org/a')
+        self.assertEqual(published[0]['chars'], 120)
+        self.assertEqual(self.pr['public_pages'](None), [])
+        # الدالة لا تُعدّل الأصل
+        self.assertIn('text', pages[0])
+
+
 class ClaimTests(unittest.TestCase):
     def setUp(self):
         self.cc = load('claim_check')
@@ -237,6 +321,60 @@ class ClaimTests(unittest.TestCase):
             self.assertNotIn('verified', status)
 
 
+class ClaimHardeningTests(unittest.TestCase):
+    def setUp(self):
+        self.cc = load('claim_check')
+
+    def _page(self, text, source_id='src_1'):
+        return {'source_id': source_id, 'url': 'https://example.org/a',
+                'content_level': 'full_page', 'text': text}
+
+    def test_number_is_matched_as_a_whole_not_inside_a_bigger_number(self):
+        record = self.cc['check_claim'](
+            'ارتفعت أسعار الخبز في الخرطوم بنسبة 30 بالمئة خلال مارس',
+            [self._page('ارتفعت أسعار الخبز في الخرطوم بنسبة 1300 بالمئة خلال مارس')])
+        self.assertEqual(record['status'], 'number_not_found')
+        self.assertIn('30', record['missing_numbers'])
+
+    def test_negated_claim_is_flagged_not_called_a_match(self):
+        record = self.cc['check_claim'](
+            'لم ترتفع أسعار الخبز في الخرطوم خلال مارس حسب تجار السوق',
+            [self._page('ارتفعت أسعار الخبز في الخرطوم بنسبة كبيرة خلال مارس حسب تجار السوق')])
+        self.assertEqual(record['status'], 'possible_negation_mismatch')
+        self.assertEqual(record['matched_status'], 'matched_in_retrieved_page')
+        self.assertIn('نفي', record['reason'])
+
+    def test_negated_claim_with_negated_source_is_not_flagged(self):
+        record = self.cc['check_claim'](
+            'لم ترتفع أسعار الخبز في الخرطوم خلال مارس حسب تجار السوق',
+            [self._page('قال تجار السوق إن أسعار الخبز لم ترتفع في الخرطوم خلال مارس')])
+        self.assertEqual(record['status'], 'matched_in_retrieved_page')
+
+    def test_words_scattered_across_a_long_page_are_not_a_match(self):
+        filler = ('واصلت الورشة أعمالها في الجلسة الصباحية بحضور عدد من المشاركين '
+                  'وناقش الحاضرون جدول الأعمال ثم انتقلوا إلى استراحة قصيرة. ') * 3
+        text = ('تناول التقرير أوضاع الريف. ' + filler
+                + 'وقال المسؤول إن أسعار المعدات ارتفعت عالميًا. ' + filler
+                + 'وتشير تقارير السوق إلى أن الطلب على القمح زاد. ' + filler
+                + 'وأضاف أن الخرطوم تحتاج إلى مزيد من الصوامع. ' + filler
+                + 'وفي سياق آخر ناقش الاجتماع تمويل البنك الزراعي.')
+        record = self.cc['check_claim'](
+            'ارتفعت أسعار القمح في الخرطوم بعد زيادة الطلب بحسب البنك الزراعي',
+            [self._page(text)])
+        self.assertEqual(record['status'], 'weak_match')
+        self.assertEqual(record['reason'], 'words_scattered')
+        # الكلمات موجودة فعلًا في الصفحة كلها — وهذا سبب الخطأ القديم
+        self.assertGreaterEqual(record['page_coverage'], 0.7)
+        self.assertLess(record['coverage'], 0.7)
+
+    def test_match_carries_the_excerpt_it_was_based_on(self):
+        record = self.cc['check_claim'](
+            'ارتفعت أسعار الشحن في ميناء بورتسودان خلال 2026',
+            [self._page('قال التقرير إن أسعار الشحن في ميناء بورتسودان ارتفعت خلال 2026.')])
+        self.assertEqual(record['status'], 'matched_in_retrieved_page')
+        self.assertIn('بورتسودان', record['evidence_excerpt'])
+
+
 class WiringTests(unittest.TestCase):
     def test_research_bundle_carries_pages_and_verification(self):
         source = (SERVICES / 'web_research.py').read_text()
@@ -255,8 +393,23 @@ class WiringTests(unittest.TestCase):
         self.assertIn('claim_check.check_report', api)
         for key in ('"search_report"', '"skipped_angles"', '"pages"', '"verification"'):
             self.assertIn(key, api)
-        # لا يُرسل نص الصفحات كاملًا في قائمة الحزمة (حجم وكشف بلا داع)
-        self.assertIn('if key != "text"', api)
+
+    def test_every_pages_response_goes_through_public_pages(self):
+        """كل مسار يعيد «pages» يجب أن يمرّ بالدالة التي تحذف النص.
+
+        الفحص بالنص القديم كان ينجح لأن السلسلة موجودة في مسار آخر فقط.
+        هنا نفحص كل دالة في الملف، فلا يمرّ مسار ينسى الحذف.
+        """
+        source = (ROOT / 'backend/app/api/simulation.py').read_text()
+        tree = ast.parse(source)
+        offenders = []
+        for func in [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]:
+            segment = ast.get_source_segment(source, func) or ''
+            if '"pages"' not in segment:
+                continue
+            if 'public_pages' not in segment:
+                offenders.append(func.name)
+        self.assertEqual(offenders, [], f'مسارات تعيد نص الصفحات: {offenders}')
 
 
 if __name__ == '__main__':

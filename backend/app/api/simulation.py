@@ -1931,6 +1931,7 @@ def get_simulation_research(simulation_id: str):
     """ما وجده بحث الويب عن موضوع هذه المحاكاة (وقائع + مصادر + تاريخ البحث)."""
     try:
         from ..services import web_research
+        from ..services.page_retrieval import public_pages
 
         sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
         bundle = web_research.load(sim_dir)
@@ -1959,7 +1960,8 @@ def get_simulation_research(simulation_id: str):
                 "executed_angles": (bundle.get("topic") or {}).get("executed_angles") or [],
                 "skipped_angles": (bundle.get("topic") or {}).get("skipped_angles") or [],
                 "search_report": (bundle.get("topic") or {}).get("search_report") or {},
-                "pages": (bundle.get("topic") or {}).get("pages") or [],
+                # نفس قاعدة مسار المعاينة: لا نص صفحات في الاستجابة
+                "pages": public_pages((bundle.get("topic") or {}).get("pages") or []),
                 "verification": (bundle.get("topic") or {}).get("verification") or {},
                 "evidence_ledger": (bundle.get("topic") or {}).get("evidence_ledger") or {},
             },
@@ -1974,6 +1976,7 @@ def preview_web_research():
     """بحث ويب تجريبي عن أي موضوع — للتأكد أن المحرّك يفهم موضوعًا خارج السودان أيضًا."""
     try:
         from ..services import web_research
+        from ..services.page_retrieval import public_pages
 
         payload = request.get_json(silent=True) or {}
         topic = (payload.get('topic') or '').strip()
@@ -1992,10 +1995,7 @@ def preview_web_research():
                 "executed_angles": bundle.get("executed_angles") or [],
                 "skipped_angles": bundle.get("skipped_angles") or [],
                 "search_report": bundle.get("search_report") or {},
-                "pages": [
-                    {key: value for key, value in page.items() if key != "text"}
-                    for page in (bundle.get("pages") or [])
-                ],
+                "pages": public_pages(bundle.get("pages") or []),
                 "verification": bundle.get("verification") or {},
                 "evidence_ledger": bundle.get("evidence_ledger") or {},
             },

@@ -224,8 +224,10 @@ def search_budget() -> Dict[str, Any]:
 
 
 def page_budget() -> Dict[str, Any]:
+    # الصفر قيمة صريحة تعني «لا سحب صفحات»، لا «استخدم الافتراضي».
+    raw = _env_number('ISTISHRAF_PAGE_FETCHES')
     return page_retrieval.resolve_page_budget({
-        'max_pages': _env_number('ISTISHRAF_PAGE_FETCHES') or DEFAULT_PAGE_FETCHES,
+        'max_pages': DEFAULT_PAGE_FETCHES if raw is None else raw,
     })
 
 

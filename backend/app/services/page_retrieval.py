@@ -22,7 +22,7 @@ import re
 import socket
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import httpx
 
@@ -50,7 +50,10 @@ BLOCKED_HOSTS = {
     '169.254.169.254', '::1', '0.0.0.0',
 }
 BLOCKED_HOST_SUFFIXES = ('.localhost', '.local', '.internal', '.home.arpa', '.lan')
-USER_AGENT = 'IstishrafResearch/1.0 (+analysis retrieval; no indexing; respects robots-by-default)'
+# الوصف هنا يجب أن يطابق السلوك: لا فحص robots.txt في هذا المسار.
+USER_AGENT = 'IstishrafResearch/1.0 (+analysis retrieval; no indexing)'
+
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 _SKIP_TAGS = re.compile(r'(?is)<(script|style|noscript|template|svg|iframe|canvas)[^>]*>.*?</\1>')
 _COMMENTS = re.compile(r'(?s)<!--.*?-->')
@@ -189,6 +192,8 @@ def fetch_page(url: str, *, budget=None, client=None, resolve_dns: bool = True) 
         'error': '',
         'retrieved_at': _now(),
         'content_level': 'none',
+        'redirects': 0,
+        'blocked_redirect': '',
     }
     if not record['url']:
         record['status'] = 'blocked'
@@ -202,31 +207,68 @@ def fetch_page(url: str, *, budget=None, client=None, resolve_dns: bool = True) 
 
     own_client = client is None
     http = client or httpx.Client(
-        follow_redirects=True,
-        max_redirects=int(budget['max_redirects']),
+        follow_redirects=False,
         timeout=float(budget['timeout_seconds']),
         headers={'User-Agent': USER_AGENT,
                  'Accept': 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1'},
         trust_env=False,
     )
     try:
-        with http.stream('GET', record['url']) as response:
-            record['http_status'] = response.status_code
-            headers = response.headers or {}
-            record['content_type'] = str(headers.get('content-type') or '')[:120]
-            final_url = str(getattr(response, 'url', '') or '')
-            record['final_url'] = canonical_source_url(final_url) or record['url']
-            if response.status_code >= 400:
-                record['status'] = 'error'
-                record['error'] = f'http_{response.status_code}'
-                return record
-            base_type = record['content_type'].split(';')[0].strip().lower()
-            if base_type and not any(base_type.startswith(t) for t in TEXTUAL_CONTENT_TYPES):
-                record['status'] = 'skipped'
-                record['error'] = f'unsupported_content_type:{base_type[:40]}'
-                return record
-            body, truncated = _read_limited(response, int(budget['max_bytes']))
-            record['truncated'] = truncated
+        # التحويلات تُتبع يدويًا خطوة بخطوة: كل عنوان تحويل يُفحص بنفس حراسة
+        # العنوان الأول قبل أن يُطلب، فلا تُلتفّ الحراسة بتحويل إلى الشبكة الداخلية.
+        current = record['url']
+        max_redirects = int(budget['max_redirects'])
+        hops = 0
+        body = b''
+        while True:
+            with http.stream('GET', current, follow_redirects=False) as response:
+                status = int(getattr(response, 'status_code', 0) or 0)
+                headers = response.headers or {}
+                if status in REDIRECT_STATUSES:
+                    location = str(headers.get('location') or '').strip()
+                    if not location:
+                        record['status'] = 'error'
+                        record['error'] = f'http_{status}_without_location'
+                        return record
+                    target = canonical_source_url(urljoin(current, location))
+                    if not target:
+                        record['status'] = 'blocked'
+                        record['error'] = 'redirect_to_invalid_url'
+                        return record
+                    if hops >= max_redirects:
+                        record['status'] = 'error'
+                        record['error'] = 'too_many_redirects'
+                        record['final_url'] = target
+                        return record
+                    reason = url_blocked_reason(target, resolve_dns=resolve_dns)
+                    if reason:
+                        # التحويل مرفوض قبل أي اتصال به: لا نص ولا محتوى من الشبكة الداخلية
+                        record['status'] = 'blocked'
+                        record['error'] = f'redirect_blocked:{reason}'
+                        record['blocked_redirect'] = target
+                        record['final_url'] = target
+                        record['redirects'] = hops + 1
+                        return record
+                    hops += 1
+                    current = target
+                    continue
+                record['http_status'] = status
+                record['redirects'] = hops
+                record['content_type'] = str(headers.get('content-type') or '')[:120]
+                final_url = str(getattr(response, 'url', '') or '')
+                record['final_url'] = canonical_source_url(final_url) or current
+                if status >= 400:
+                    record['status'] = 'error'
+                    record['error'] = f'http_{status}'
+                    return record
+                base_type = record['content_type'].split(';')[0].strip().lower()
+                if base_type and not any(base_type.startswith(t) for t in TEXTUAL_CONTENT_TYPES):
+                    record['status'] = 'skipped'
+                    record['error'] = f'unsupported_content_type:{base_type[:40]}'
+                    return record
+                body, truncated = _read_limited(response, int(budget['max_bytes']))
+                record['truncated'] = truncated
+                break
     except Exception as exc:  # noqa: BLE001
         record['status'] = 'error'
         record['error'] = f'{type(exc).__name__}: {str(exc)[:160]}'
@@ -251,6 +293,17 @@ def fetch_page(url: str, *, budget=None, client=None, resolve_dns: bool = True) 
     record['status'] = 'fetched'
     record['content_level'] = 'full_page'
     return record
+
+
+def public_pages(pages: Optional[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """نسخة آمنة للنشر: بلا نص الصفحة، وببقية الحقول كما هي.
+
+    مسارات الـAPI جميعها تستخدم هذه الدالة، حتى لا يعرض مسار ما يخفيه آخر.
+    """
+    return [
+        {key: value for key, value in page.items() if key != 'text'}
+        for page in (pages or []) if isinstance(page, dict)
+    ]
 
 
 def retrieve_pages(urls: Iterable[str], *, budget=None, fetcher=None,

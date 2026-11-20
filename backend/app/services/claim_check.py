@@ -22,6 +22,11 @@ NOTE = ('مطابقة لفظية آلية فقط: لا تثبت صحة الاد�
 
 MIN_WORDS = 3
 MATCH_COVERAGE = 0.7
+# الكلمات المتطابقة يجب أن تقع قريبة من بعضها، لا متفرقة في صفحة كاملة.
+WINDOW_CHARS = 240
+MAX_OCCURRENCES = 60
+# أدوات نفي/استثناء: إن وُجدت في الادعاء ولم نجدها في المقطع المطابق، ننبّه ولا نحكم.
+NEGATIONS = frozenset({'لم', 'لن', 'ليس', 'ليست', 'غير', 'دون', 'بلا', 'لا', 'عدا', 'سوى', 'انتفى'})
 
 _AR_DIACRITICS = re.compile(r'[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed\u0640]')
 _DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
@@ -57,6 +62,58 @@ def claim_numbers(text: Any) -> List[str]:
     return numbers
 
 
+def _word_pattern(word: str) -> str:
+    return r'(?<!\w)' + re.escape(word) + r'(?!\w)'
+
+
+def _number_present(number: str, haystack: str) -> bool:
+    """الرقم يُطابق كرقم كامل: «30» لا تُطابق داخل «1300» ولا «2015»."""
+    return re.search(r'(?<![\d.,])' + re.escape(number) + r'(?![\d])', haystack) is not None
+
+
+def _has_negation(text: Any) -> bool:
+    return any(token in NEGATIONS for token in _WORD.findall(_normalise(text)))
+
+
+def _window_match(words: List[str], haystack: str) -> Dict[str, Any]:
+    """أفضل مقطع: أكبر عدد من كلمات الادعاء داخل نافذة واحدة من النص.
+
+    يعيد تغطية المقطع وتغطية الصفحة كلها ونص المقطع نفسه، حتى يرى القارئ
+    على أي أساس قيلت المطابقة.
+    """
+    events: List[tuple] = []
+    for word in words:
+        seen_here = 0
+        for match in re.finditer(_word_pattern(word), haystack):
+            events.append((match.start(), match.end(), word))
+            seen_here += 1
+            if seen_here >= MAX_OCCURRENCES:
+                break
+    present_page = len({event[2] for event in events})
+    page_coverage = present_page / len(words) if words else 0.0
+    if not events:
+        return {'coverage': 0.0, 'page_coverage': page_coverage, 'excerpt': ''}
+    events.sort()
+    counts: Dict[str, int] = {}
+    left = 0
+    best_count = 0
+    best_span = (events[0][0], events[0][1])
+    for right, (start, end, word) in enumerate(events):
+        counts[word] = counts.get(word, 0) + 1
+        while start - events[left][0] > WINDOW_CHARS:
+            old = events[left][2]
+            counts[old] -= 1
+            if counts[old] <= 0:
+                counts.pop(old, None)
+            left += 1
+        if len(counts) > best_count:
+            best_count = len(counts)
+            best_span = (events[left][0], end)
+    coverage = best_count / len(words) if words else 0.0
+    excerpt = ' '.join(haystack[max(0, best_span[0] - 20): best_span[1] + 60].split())
+    return {'coverage': coverage, 'page_coverage': page_coverage, 'excerpt': excerpt[:300]}
+
+
 def _source_record(source: Dict[str, Any]) -> Dict[str, Any]:
     """توحيد شكل المصدر: سجلّ السجلّ (مقتطف) أو نتيجة سحب صفحة (نص كامل)."""
     content_level = str(source.get('content_level') or '')
@@ -80,6 +137,7 @@ def check_claim(claim: str, sources: Optional[Iterable[Dict[str, Any]]]) -> Dict
         'claim': ' '.join(str(claim or '').split())[:400],
         'status': 'unverifiable_no_source',
         'coverage': 0.0,
+        'page_coverage': 0.0,
         'content_level': '',
         'matched_source_ids': [],
         'matched_urls': [],
@@ -104,17 +162,16 @@ def check_claim(claim: str, sources: Optional[Iterable[Dict[str, Any]]]) -> Dict
     missing_numbers: List[str] = []
     for source in prepared:
         haystack = _normalise(source['text'])
-        tokens = set(_WORD.findall(haystack))
-        present = [word for word in words if word in tokens]
-        coverage = len(present) / len(words)
-        absent = [number for number in numbers if number not in haystack]
+        absent = [number for number in numbers if not _number_present(number, haystack)]
         if absent:
             missing_numbers = absent
             continue
-        key = (coverage, 1 if source['content_level'] == 'full_page' else 0)
+        matched_window = _window_match(words, haystack)
+        key = (round(matched_window['coverage'], 4),
+               1 if source['content_level'] == 'full_page' else 0)
         if key > best_key:
             best_key = key
-            best = {**source, 'coverage': coverage}
+            best = {**source, **matched_window}
 
     if best is None:
         # الأرقام لم تُطابق في أي مصدر: نقول ذلك صراحة، ولا نسمّيه تكذيبًا.
@@ -123,16 +180,27 @@ def check_claim(claim: str, sources: Optional[Iterable[Dict[str, Any]]]) -> Dict
             record['missing_numbers'] = missing_numbers
         return record
     record['coverage'] = round(float(best['coverage']), 3)
+    record['page_coverage'] = round(float(best.get('page_coverage') or 0.0), 3)
     record['content_level'] = best['content_level']
+    record['evidence_excerpt'] = best.get('excerpt') or ''
+    record['matched_source_ids'] = [best['source_id']]
+    record['matched_urls'] = [best['url']]
     if best['coverage'] >= MATCH_COVERAGE:
-        record['status'] = ('matched_in_retrieved_page'
-                            if best['content_level'] == 'full_page' else 'matched_in_search_snippet')
-        record['matched_source_ids'] = [best['source_id']]
-        record['matched_urls'] = [best['url']]
+        base_status = ('matched_in_retrieved_page'
+                       if best['content_level'] == 'full_page' else 'matched_in_search_snippet')
+        record['matched_status'] = base_status
+        if _has_negation(record['claim']) and not _has_negation(best.get('excerpt') or ''):
+            # المطابقة اللفظية لا تفهم النفي: ننبّه بدل أن نسمّيها مطابقة تامة
+            record['status'] = 'possible_negation_mismatch'
+            record['reason'] = 'الادعاء يحمل نفيًا والمقطع المطابق لا يحمل نفيًا'
+        else:
+            record['status'] = base_status
     else:
         record['status'] = 'weak_match'
-        record['matched_source_ids'] = [best['source_id']]
-        record['matched_urls'] = [best['url']]
+        # الكلمات موجودة في الصفحة لكن متفرقة: أشهر أسباب «المطابقة» الكاذبة
+        record['reason'] = ('words_scattered'
+                            if (best.get('page_coverage') or 0.0) >= MATCH_COVERAGE
+                            else 'low_coverage')
     return record
 
 
@@ -213,7 +281,8 @@ def check_report(text: str, sources: Optional[Iterable[Dict[str, Any]]],
         'note': NOTE,
         'limitations': [
             'عيّنة محدودة من الجُمل، وليست كل التقرير.',
-            'المطابقة لفظية ولا تفهم النفي أو القلب أو الشرط.',
+            'المطابقة لفظية: تشترط تقارب الكلمات في مقطع واحد، وترفض الأرقام الجزئية.',
+            'لا تفهم النفي أو القلب أو الشرط؛ النفي يُنبَّه عليه ولا يُحكم فيه.',
             'غياب المطابقة ليس دليل خطأ، ووجودها ليس دليل صحة.',
         ],
     }
