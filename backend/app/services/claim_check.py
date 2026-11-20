@@ -215,7 +215,8 @@ def verify_snippets(sources: Optional[Iterable[Dict[str, Any]]],
         if page.get('status') == 'fetched' and (page.get('text') or '').strip():
             texts[str(page.get('url'))] = str(page.get('text'))
     records: List[Dict[str, Any]] = []
-    counts = {'confirmed_in_page': 0, 'not_found_in_page': 0, 'page_not_retrieved': 0, 'not_checkable': 0}
+    counts = {'confirmed_in_page': 0, 'not_found_in_page': 0, 'negation_differs': 0,
+              'page_not_retrieved': 0, 'not_checkable': 0}
     for source in sources or []:
         url = str(source.get('url') or '')
         snippet = str(source.get('snippet') or '')
@@ -227,6 +228,9 @@ def verify_snippets(sources: Optional[Iterable[Dict[str, Any]]],
                 outcome = 'confirmed_in_page'
             elif status == 'not_checkable':
                 outcome = 'not_checkable'
+            elif status == 'possible_negation_mismatch':
+                # الكلمات موجودة في الصفحة لكن النفي مختلف: ليست «غير موجودة»
+                outcome = 'negation_differs'
             else:
                 outcome = 'not_found_in_page'
             counts[outcome] += 1
@@ -244,6 +248,7 @@ def verify_snippets(sources: Optional[Iterable[Dict[str, Any]]],
         'counts': counts,
         'records': records,
         'note': ('«مطابق في الصفحة» = المقتطف موجود في النص الذي سحبناه. '
+                 '«نفيها مختلف» = الكلمات موجودة لكن النفي في الصفحة يخالف المقتطف. '
                  '«غير موجود» قد يعني اقتطاعًا أو إعادة صياغة أو حجبًا، وليس تكذيبًا.'),
     }
 

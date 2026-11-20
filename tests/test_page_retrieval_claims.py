@@ -367,6 +367,17 @@ class ClaimHardeningTests(unittest.TestCase):
         self.assertGreaterEqual(record['page_coverage'], 0.7)
         self.assertLess(record['coverage'], 0.7)
 
+    def test_negation_difference_is_not_reported_as_absent_from_page(self):
+        # الكلمات موجودة في الصفحة، لكن الصفحة تقول «ما ارتفعت» لا «لم ترتفع»
+        pages = [{'url': 'https://example.org/p', 'status': 'fetched',
+                  'text': 'وقال مسؤول محلي إن أسعار الخبز ما ارتفعت في الخرطوم خلال مارس حسب بياناته.'}]
+        sources = [{'source_id': 's1', 'url': 'https://example.org/p',
+                    'snippet': 'أسعار الخبز لم ترتفع في الخرطوم خلال مارس'}]
+        result = self.cc['verify_snippets'](sources, pages)
+        self.assertEqual(result['records'][0]['outcome'], 'negation_differs')
+        self.assertEqual(result['counts']['negation_differs'], 1)
+        self.assertEqual(result['counts']['not_found_in_page'], 0)
+
     def test_match_carries_the_excerpt_it_was_based_on(self):
         record = self.cc['check_claim'](
             'ارتفعت أسعار الشحن في ميناء بورتسودان خلال 2026',
@@ -393,6 +404,11 @@ class WiringTests(unittest.TestCase):
         self.assertIn('claim_check.check_report', api)
         for key in ('"search_report"', '"skipped_angles"', '"pages"', '"verification"'):
             self.assertIn(key, api)
+
+    def test_prompt_warns_about_negation_difference(self):
+        source = (ROOT / 'backend/app/services/web_research.py').read_text()
+        self.assertIn('negation_differs', source)
+        self.assertIn('نفيها مختلف', source)
 
     def test_every_pages_response_goes_through_public_pages(self):
         """كل مسار يعيد «pages» يجب أن يمرّ بالدالة التي تحذف النص.
