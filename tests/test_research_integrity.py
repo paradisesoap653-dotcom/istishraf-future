@@ -56,8 +56,12 @@ class IntegrationContractTests(unittest.TestCase):
         path = SERVICES / 'web_research.py'
         tree = ast.parse(path.read_text())
         tree.body = [n for n in tree.body if not (isinstance(n, ast.ImportFrom) and n.level)]
-        ns = {'__name__':'isolated_research', 'serp_lookup':Mock()}
-        ns.update({key:getattr(policy, key) for key in ('clean_project_title','build_evidence_ledger','plan_queries','EVIDENCE_POLICY')})
+        ns = {'__name__':'isolated_research', 'serp_lookup':Mock(),
+              'page_retrieval':Mock(), 'claim_check':Mock()}
+        ns.update({key:getattr(policy, key) for key in dir(policy) if not key.startswith('_')})
+        ns['page_retrieval'].resolve_page_budget.return_value = {'max_pages':0,'max_bytes':0,'max_chars':0,'timeout_seconds':0,'max_redirects':0}
+        ns['page_retrieval'].retrieve_pages.return_value = {'pages': []}
+        ns['claim_check'].verify_snippets.return_value = {}
         exec(compile(tree, str(path), 'exec'), ns)
         return ns
 
@@ -67,11 +71,17 @@ class IntegrationContractTests(unittest.TestCase):
         ns['search_news'] = Mock(return_value=[])
         ns['_cache_write'] = Mock()
         result = ns['gather_topic']('Water in Morocco', use_cache=False)
-        self.assertEqual(result['queries'], ['Water in Morocco'])
-        self.assertEqual(result['executed_angles'], ['baseline'])
+        angles = [step['angle'] for step in result['search_report']['angles']]
+        # لا تُسجَّل زاوية لم تُنفَّذ: المسجَّل هو ما نُفِّذ فعلًا فقط
+        self.assertEqual(result['queries'], ['Water in Morocco',
+                                             'Water in Morocco primary data study methodology'])
+        self.assertEqual(result['executed_angles'], ['baseline', 'primary'])
+        self.assertEqual(angles, ['baseline', 'primary', 'alternatives'])
+        self.assertEqual(result['skipped_angles'], ['alternatives'])
+        self.assertEqual(result['search_report']['budget']['used'], 2)
+        self.assertEqual(ns['search_topic'].call_count, 2)
         self.assertEqual(len(result['query_plan']), 3)
         self.assertEqual(len(result['evidence_ledger']['sources']), 1)
-        ns['search_topic'].assert_called_once()
 
     def test_search_errors_are_not_success(self):
         ns = self.load_research()

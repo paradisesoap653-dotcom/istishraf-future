@@ -1,9 +1,9 @@
 """Topic research with explicit provenance and conservative geographic scope.
 
 Search snippets are retained as unverified retrieval records, not established
-facts. This module does not fetch full pages or measure population opinion.
+facts. Several query angles are executed inside a hard call budget; angles that
+the budget did not reach are recorded as *not executed*, never implied.
 Local Sudan enrichment is conditional; there is no default study country.
-Additional query angles are recorded as a plan only, not silently executed.
 """
 
 from __future__ import annotations
@@ -16,8 +16,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import serp_lookup
-from .research_integrity import clean_project_title, build_evidence_ledger, plan_queries, EVIDENCE_POLICY
+from .research_integrity import (
+    EVIDENCE_POLICY,
+    build_evidence_ledger,
+    clean_project_title,
+    plan_queries,
+    plan_search_queries,
+    resolve_search_budget,
+)
 
+CACHE_VERSION = 'evidence-v2'
 TOPIC_TTL_HOURS = 12
 PULSE_TTL_HOURS = 6
 MAX_TOPIC_SOURCES = 8
@@ -188,13 +196,105 @@ def search_news(topic: str, *, max_results: int = MAX_NEWS_SOURCES,
     return facts
 
 
+def _env_number(name: str):
+    raw = str(os.environ.get(name) or '').strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def search_budget() -> Dict[str, Any]:
+    """ميزانية النداءات: افتراضات محافظة، ويمكن للمشغّل تعديلها بالبيئة."""
+    overrides = {
+        'max_query_calls': _env_number('ISTISHRAF_SEARCH_QUERY_CALLS'),
+        'max_news_calls': _env_number('ISTISHRAF_SEARCH_NEWS_CALLS'),
+        'max_results_per_call': _env_number('ISTISHRAF_SEARCH_RESULTS_PER_CALL'),
+        'per_call_timeout_seconds': _env_number('ISTISHRAF_SEARCH_TIMEOUT'),
+    }
+    return resolve_search_budget({k: v for k, v in overrides.items() if v is not None})
+
+
+def search_multi_angle(topic: str, *, budget: Optional[Dict[str, Any]] = None,
+                       searcher=None, timeout: Optional[float] = None) -> Dict[str, Any]:
+    """ينفّذ زوايا البحث المتاحة داخل الميزانية، ويسجّل ما لم يُنفَّذ بصراحة.
+
+    لا يتجاوز عدد النداءات الميزانية أبدًا، والفشل يُسجّل فشلًا لا نجاحًا،
+    ونتيجة فارغة تُسجّل «لا نتائج» لا «تمّ البحث بنجاح».
+    """
+    budget = budget or search_budget()
+    run = searcher or search_topic
+    plan = plan_search_queries(topic, budget=budget)
+    max_calls = int(budget['max_query_calls'])
+    call_timeout = float(timeout if timeout is not None else budget['per_call_timeout_seconds'])
+
+    records: List[Dict[str, Any]] = []
+    facts: List[Dict[str, str]] = []
+    errors: List[str] = []
+    used = 0
+    for step in plan:
+        entry = {'angle': step['angle'], 'query': step['query'], 'priority': step['priority']}
+        if used >= max_calls:
+            entry['status'] = 'skipped_budget'
+            entry['results'] = 0
+            records.append(entry)
+            continue
+        used += 1
+        try:
+            found = list(run(step['query'], max_results=step['max_results'], timeout=call_timeout) or [])
+        except Exception as exc:  # noqa: BLE001 - الفشل يُسجَّل ولا يُخفى
+            entry['status'] = 'error'
+            entry['results'] = 0
+            entry['error'] = str(exc)[:180]
+            errors.append(f"{step['angle']}: {str(exc)[:160]}")
+            records.append(entry)
+            continue
+        entry['results'] = len(found)
+        entry['status'] = 'executed' if found else 'empty'
+        records.append(entry)
+        facts.extend(found)
+
+    executed = [r['angle'] for r in records if r['status'] in {'executed', 'empty'}]
+    skipped = [r['angle'] for r in records if r['status'] == 'skipped_budget']
+    failed = [r['angle'] for r in records if r['status'] == 'error']
+    # الأشدّ سوءًا يغلب في التسمية، والحالتان تُسجَّلان معًا في skipped/failed_angles
+    if used == 0:
+        status = 'not_started'
+    elif len(failed) == used:
+        status = 'failed'
+    elif failed:
+        status = 'partial_errors'
+    elif skipped:
+        status = 'partial_budget'
+    else:
+        status = 'complete'
+    return {
+        'facts': facts,
+        'angles': records,
+        'executed_angles': executed,
+        'skipped_angles': skipped,
+        'failed_angles': failed,
+        'errors': errors,
+        'budget': {'max_query_calls': max_calls, 'used': used,
+                   'exhausted': bool(skipped), 'remaining': max(0, max_calls - used)},
+        'status': status,
+    }
+
+
 def gather_topic(topic: str, *, with_news: bool = True,
-                 use_cache: bool = True, max_results: int = MAX_TOPIC_SOURCES) -> Dict[str, Any]:
-    """حزمة بحث كاملة عن موضوع واحد (مع ذاكرة مؤقتة)."""
+                 use_cache: bool = True, max_results: int = MAX_TOPIC_SOURCES,
+                 multi_angle: bool = True,
+                 budget: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """حزمة بحث كاملة عن موضوع واحد (مع ذاكرة مؤقتة وحدود صريحة)."""
     query = _clean(topic, 240)
     if not query:
         return {'ok': False, 'error': 'لا يوجد موضوع للبحث', 'facts': [], 'news': []}
-    cache_name = f'topic::evidence-v1::{query}::{int(with_news)}::{max_results}'
+    budget = budget or search_budget()
+    cache_name = (f'topic::{CACHE_VERSION}::{query}::{int(with_news)}::{max_results}'
+                  f'::{int(multi_angle)}'
+                  f'::q{budget["max_query_calls"]}::n{budget["max_news_calls"]}')
     if use_cache:
         cached = _cache_read(cache_name, TOPIC_TTL_HOURS)
         if cached:
@@ -207,24 +307,55 @@ def gather_topic(topic: str, *, with_news: bool = True,
         'fetched_at': _now().isoformat(),
         'facts': [],
         'news': [],
-        'queries': [query],
+        'queries': [],
         'query_plan': plan_queries(query),
-        'executed_angles': ['baseline'],
+        'executed_angles': [],
+        'search_report': {},
         'errors': [],
+        'evidence_ledger': {},
     }
     try:
-        payload['facts'] = search_topic(query, max_results=max_results)
-        payload['ok'] = bool(payload['facts'])
+        if multi_angle:
+            run = search_multi_angle(query, budget=budget)
+            payload['facts'] = run['facts']
+            payload['queries'] = [r['query'] for r in run['angles']
+                                  if r['status'] in {'executed', 'empty'}]
+            payload['executed_angles'] = run['executed_angles']
+            payload['skipped_angles'] = run['skipped_angles']
+            payload['search_report'] = {
+                'status': run['status'], 'angles': run['angles'], 'budget': run['budget'],
+            }
+            payload['errors'].extend(run['errors'])
+        else:
+            payload['facts'] = search_topic(
+                query, max_results=min(int(max_results), int(budget['max_results_per_call'])),
+                timeout=float(budget['per_call_timeout_seconds']))
+            payload['queries'] = [query]
+            payload['executed_angles'] = ['baseline']
+            payload['search_report'] = {
+                'status': 'complete' if payload['facts'] else 'empty',
+                'angles': [{'angle': 'baseline', 'query': query,
+                            'status': 'executed' if payload['facts'] else 'empty',
+                            'results': len(payload['facts'])}],
+                'budget': {'max_query_calls': 1, 'used': 1, 'exhausted': False, 'remaining': 0},
+            }
     except Exception as exc:  # noqa: BLE001
-        payload['errors'].append(f'بحث جوجل: {exc}')
-    if with_news:
+        payload['errors'].append(f'بحث الموضوع: {exc}')
+        payload['search_report'] = {'status': 'failed', 'angles': [], 'budget': {}}
+    payload['ok'] = bool(payload['facts'])
+
+    if with_news and int(budget['max_news_calls']) > 0:
         try:
-            payload['news'] = search_news(query)
+            payload['news'] = search_news(
+                query, max_results=min(int(budget['max_results_per_call']), MAX_NEWS_SOURCES),
+                timeout=float(budget['per_call_timeout_seconds']))
             payload['ok'] = payload['ok'] or bool(payload['news'])
         except Exception as exc:  # noqa: BLE001
             payload['errors'].append(f'بحث الأخبار: {exc}')
+
     payload['evidence_ledger'] = build_evidence_ledger(
         payload['facts'] + payload['news'], retrieved_at=payload['fetched_at'])
+
     if payload['ok']:
         try:
             _cache_write(cache_name, payload)
@@ -399,6 +530,13 @@ def summary_line(bundle: Optional[Dict[str, Any]]) -> str:
         bits.append(f'{n_facts} نتيجة عن الموضوع')
     if n_pulse:
         bits.append(f'{n_pulse} خبرًا عن السودان')
+    angles = topic.get('executed_angles') or []
+    skipped = topic.get('skipped_angles') or []
+    if angles:
+        angles_bit = f'{len(angles)} زاوية بحث'
+        if skipped:
+            angles_bit += f' ({len(skipped)} زاوية لم تنفَّذ لضيق الميزانية)'
+        bits.append(angles_bit)
     stamp = ''
     fetched = topic.get('fetched_at') or pulse.get('fetched_at')
     if fetched:
