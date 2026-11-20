@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 
 from ..config import Config
+from .research_integrity import EVIDENCE_POLICY
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
 from . import platform_inputs
@@ -421,15 +422,8 @@ def run_serverless_simulation(
         logger.warning(f"تعذر إدراج وقائع البحث في المحاكاة: {exc}")
     if inputs_block:
         platform_header += f"{inputs_block}\n\n"
-    # طبقة «الروح السودانية»: تجعل التعليقات قريبة من الواقع لا فصحى إخبارية
-    try:
-        from . import sudanese_culture
-
-        culture_block = sudanese_culture.prompt_block(requirement)
-        if culture_block:
-            platform_header += f"{culture_block}\n\n"
-    except Exception:  # noqa: BLE001
-        pass
+    # Context comes from the study, not a fixed national dialect template.
+    platform_header += "حلّل سياق الدراسة فقط؛ لا تخترع بلداً أو لهجة أو فئات غير محددة.\n"
 
     llm = LLMClient()
 
@@ -524,7 +518,7 @@ def run_serverless_simulation(
                 messages=[
                     {
                         "role": "system",
-                        "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة متعددة الوكلاء.",
+                        "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة متعددة الوكلاء." + "\n" + EVIDENCE_POLICY,
                     },
                     {"role": "user", "content": _batch_prompt(next_round, chunk, _context_digest(rounds_data))},
                 ],
@@ -541,7 +535,7 @@ def run_serverless_simulation(
             try:
                 resp = llm.chat_json(
                     messages=[
-                        {"role": "system", "content": "أجب بـ JSON صالح فقط."},
+                        {"role": "system", "content": "أجب بـ JSON صالح فقط." + "\n" + EVIDENCE_POLICY},
                         {"role": "user", "content": _batch_prompt(next_round, 1, _context_digest(rounds_data))},
                     ],
                     temperature=0.75,
@@ -590,7 +584,7 @@ def run_serverless_simulation(
                     messages=[
                         {
                             "role": "system",
-                            "content": "أجب بـ JSON صالح فقط يمثّل تعليقات واقعية على منشورات.",
+                            "content": "أجب بـ JSON صالح فقط يمثّل تعليقات واقعية على منشورات." + "\n" + EVIDENCE_POLICY,
                         },
                         {
                             "role": "user",
@@ -637,7 +631,7 @@ def run_serverless_simulation(
         try:
             resp = llm.chat_json(
                 messages=[
-                    {"role": "system", "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة."},
+                    {"role": "system", "content": "أجب بـ JSON صالح فقط يمثّل وقائع المحاكاة." + "\n" + EVIDENCE_POLICY},
                     {
                         "role": "user",
                         "content": (

@@ -19,6 +19,7 @@ from datetime import datetime
 from enum import Enum
 
 from ..config import Config
+from .research_integrity import EVIDENCE_POLICY
 from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
@@ -1235,7 +1236,7 @@ class ReportAgent:
         if progress_callback:
             progress_callback("planning", 30, t('progress.generatingOutline'))
         
-        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}"
+        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}\n{EVIDENCE_POLICY}"
         user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
             simulation_requirement=self.simulation_requirement,
             total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
@@ -1341,7 +1342,7 @@ class ReportAgent:
             tools_description=self._get_tools_description(),
         )
         system_prompt = (
-            f"{system_prompt}\n\n{get_language_instruction()}\n"
+            f"{system_prompt}\n\n{get_language_instruction()}\n{EVIDENCE_POLICY}\n"
             "لا تستخدم واجهة الأدوات المدمجة في النموذج؛ اكتب أي استدعاء أداة "
             "كنص عادي داخل وسم <tool_call>."
         )
@@ -2077,10 +2078,13 @@ class ReportAgent:
         try:
             from . import sudanese_culture
 
-            street = sudanese_culture.street_block()
+            # Do not inject a fixed national context into unrelated projects.
+            local_scope = bool(re.search(r'السودان|سوداني|\bsudan(?:ese)?\b',
+                                         self.simulation_requirement or '', re.IGNORECASE))
+            street = sudanese_culture.street_block() if local_scope else ''
             if street:
                 tail.append(street[:2200])
-            culture = sudanese_culture.report_block()
+            culture = sudanese_culture.report_block() if local_scope else ''
             if culture:
                 tail.append(culture)
         except Exception as exc:  # noqa: BLE001
@@ -2136,23 +2140,27 @@ class ReportAgent:
             "لا تذكر أنك نموذج لغوي، ولا تنادِ أي أدوات، ولا تكتب تعليمات برمجية."
         )
 
+        system_prompt += "\n" + EVIDENCE_POLICY
         user_prompt = (
             f"عنوان التقرير: {outline.title}\n"
             f"ملخص التقرير: {outline.summary}\n"
             f"هدف الدراسة: {self.simulation_requirement}\n\n"
             + (f"{self._mix_line()}\n\n" if self._mix_line() else "")
-            + f"المعطيات المتاحة من المحاكاة:\n{grounding or 'لا توجد معطيات تفصيلية؛ اعتمد على هدف الدراسة.'}\n\n"
+            + f"المعطيات المتاحة من المحاكاة:\n{grounding or 'لا توجد معطيات تفصيلية؛ صرّح بعدم كفاية الأدلة ولا تعتبر هدف الدراسة دليلاً.'}\n\n"
             f"القسم المطلوب ({section_index}/{len(outline.sections)}): {section.title}\n"
             f"وصف القسم: {section.description}\n\n"
             + (f"ملخص ما كتبته في الأقسام السابقة:\n{previous_text}\n\n" if previous_text else "")
             + (
                 "اكتب الآن محتوى هذا القسم فقط، من 300 إلى 450 كلمة، دون تكرار عنوان القسم، "
                 "وبدون إعادة أي فقرة أو جدول أرقام ورد في الأقسام السابقة. "
-                "غطِّ — بقدر ما يسمح الموضوع — طبقات مختلفة من الناس (سائق ركشة أو توك توك، "
-                "عامل يومي، تاجر أو صاحب متجر، موظف، معلم، طبيب، طالب، أمّ، نازح، مغترب)، "
-                "وأشر إلى ما يعيشه الشارع الآن (السيولة النقدية وتقطّعات التطبيقات، الوقود، "
-                "الرسوم والجمارك، ارتفاع الأسعار) متى كان ذلك صلة بالموضوع. "
-                "إن كان الموضوع غير سوداني فالتزم بسياقه هو ولا تُسقط عليه الشارع السوداني."
+                "حلّل فقط الأطراف والظروف المرتبطة بموضوع الدراسة ومكانها وزمنها. "
+                "لا تفرض مهنًا أو بلدًا أو مشكلات معيشية غير واردة في الأدلة. "
+                "افصل الوقائع الموثقة والآراء المنسوبة وافتراضات المستخدم وأحداث المحاكاة. "
+                "أعداد الأحداث المولدة ليست عينة بشرية ولا نسب تأييد مجتمعي. "
+                "لا تعتبر فرضية السؤال حقيقة مثبتة؛ ناقش التفسيرات المنافسة وما ينقص لاختبارها. "
+                "لا تساوِ آليًا بين الآراء؛ زن الادعاءات بقوة أدلتها ولا تخترع توازنًا أو نسبًا. "
+                "لا تدّعِ قراءة صفحة كاملة استنادًا إلى مقتطف بحث، ولا تنسب قولًا مولدًا لشخص حقيقي. "
+                "عند نقص الأدلة صرّح بحدود المعرفة بدلاً من الجزم."
             )
         )
 
@@ -2282,7 +2290,7 @@ class ReportAgent:
             tools_description=self._get_tools_description(),
         )
         system_prompt = (
-            f"{system_prompt}\n\n{get_language_instruction()}\n"
+            f"{system_prompt}\n\n{get_language_instruction()}\n{EVIDENCE_POLICY}\n"
             "لا تستخدم واجهة الأدوات المدمجة في النموذج؛ اكتب أي استدعاء أداة "
             "كنص عادي داخل وسم <tool_call>."
         )

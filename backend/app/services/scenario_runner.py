@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ..config import Config
+from .research_integrity import EVIDENCE_POLICY
 from ..models import storage
 from ..utils.llm_client import LLMClient
 from ..utils.logger import get_logger
@@ -251,14 +252,12 @@ _PROMPT = """أنت محرك محاكاة اجتماعية متعدد الوكل
 
 
 def _culture_block(config: Dict[str, Any]) -> str:
-    """طبقة الروح السودانية في السيناريو (تُهمَل بهدوء إن تعذّرت)."""
-    try:
-        from . import sudanese_culture
-
-        requirement = (config or {}).get('simulation_requirement') or ''
-        return sudanese_culture.prompt_block(requirement)
-    except Exception:  # noqa: BLE001
-        return ''
+    """Retain the caller contract without imposing a fixed national context."""
+    return (
+        'اختر السياق واللغة والقيود من الدراسة الأصلية فقط، '
+        'ولا تغيّر هوية الوكلاء أو تخترع بلدًا عند المقارنة. '
+        'هذه أحداث اصطناعية وليست قياساً لآراء السكان.'
+    )
 
 
 def _research_block(sim_dir: str) -> str:
@@ -336,7 +335,7 @@ def _run_llm(simulation_id: str, change: str, rounds: int,
     llm = LLMClient()
     resp = llm.chat_json(
         messages=[
-            {'role': 'system', 'content': 'أجب بـ JSON صالح فقط يمثل وقائع المحاكاة.'},
+            {'role': 'system', 'content': 'أجب بـ JSON صالح فقط يمثل وقائع المحاكاة.' + "\n" + EVIDENCE_POLICY},
             {'role': 'user', 'content': prompt},
         ],
         temperature=0.75,
@@ -691,7 +690,7 @@ def suggest_changes(report_id: str, simulation_id: str, count: int = 3) -> Dict[
         llm = LLMClient()
         resp = llm.chat_json(
             messages=[
-                {'role': 'system', 'content': 'أجب بـ JSON صالح فقط.'},
+                {'role': 'system', 'content': 'أجب بـ JSON صالح فقط.' + "\n" + EVIDENCE_POLICY},
                 {'role': 'user', 'content': _SUGGEST_PROMPT.format(
                     requirement=requirement or '—',
                     research=research_bits or 'لا توجد وقائع بحث متاحة.',

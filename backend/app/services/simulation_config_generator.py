@@ -19,6 +19,7 @@ from datetime import datetime
 from openai import OpenAI
 
 from ..config import Config
+from .research_integrity import EVIDENCE_POLICY
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
@@ -473,6 +474,7 @@ class SimulationConfigGenerator:
         """带重试的LLM调用，包含JSON修复逻辑"""
         import re
         
+        system_prompt = f"{system_prompt}\n{EVIDENCE_POLICY}"
         max_attempts = 3
         last_error = None
         
