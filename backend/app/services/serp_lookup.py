@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from .research_integrity import clean_project_title
+
 _API = 'https://serpapi.com/search.json'
 _TIMEOUT = 45.0
 
@@ -106,7 +108,7 @@ def facebook_profile(reference: str) -> Dict[str, Any]:
 def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
                   timeout: float = _TIMEOUT) -> Dict[str, Any]:
     """ملخّص اهتمام البحث من Google Trends (متوسط، قمة، اتجاه)."""
-    word = (keyword or '').strip()
+    word = clean_project_title(keyword)
     if not word:
         raise ValueError('أدخل الكلمة التي تريد قياس اهتمام الناس بها')
     geo = (geo or 'SD').strip().upper()[:2]

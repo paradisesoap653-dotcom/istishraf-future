@@ -1,25 +1,9 @@
-"""بحث حقيقي في الويب عن *أي* موضوع — لا عن السودان فقط.
+"""Topic research with explicit provenance and conservative geographic scope.
 
-لماذا هذا الملف:
-كان «الوعي السوداني» في المحرّك مجرّد قاموس كلمات عامّية وأمثال، وهذا سطح.
-المستخدم يريد شيئًا أعمق: أن يعرف المحرّك ما يجري في الشارع السوداني فعلًا
-(الأسعار، الوقود، البنوك والتطبيقات، الحرب والخدمات، هموم كل طبقة)، وأن يستطيع
-البحث في أي موضوع في العالم — حتى لو كان بعيدًا عن السودان تمامًا — قبل أن
-يُولّد الشخصيات والسيناريو والتقرير.
-
-كيف يعمل:
-1. يأخذ «الموضوع» (نص المحاكاة + عنوان المشروع).
-2. يبحث عنه في جوجل (SerpApi) ويجمع عنوانًا ومقتطفًا ورابطًا وتاريخًا.
-3. يبحث أيضًا عن «النبض السوداني» الحالي (أخبار + أسعار السوق) ويخزّنه مؤقتًا
-   حتى لا نستهلك رصيد البحث في كل خطوة.
-4. يبني «حزمة وقائع» تُحقن في البرومبت كمرجع، مع قاعدة صريحة: لا تخترع رقمًا
-   أو خبرًا ليس في الحزمة.
-
-قواعد صارمة:
-- كل واقعة تحمل مصدرها وتاريخها كما وردا في نتيجة البحث.
-- لا نُخمّن: إن فشل البحث نُعلن ذلك للمستخدم ونكمل بلا وقائع.
-- البحث رخيص لكنه ليس مجانيًا: نستخدم ذاكرة مؤقتة (12 ساعة للموضوع، 6 ساعات
-  للنبض) ونحدّ عدد المصادر.
+Search snippets are retained as unverified retrieval records, not established
+facts. This module does not fetch full pages or measure population opinion.
+Local Sudan enrichment is conditional; there is no default study country.
+Additional query angles are recorded as a plan only, not silently executed.
 """
 
 from __future__ import annotations
@@ -32,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import serp_lookup
+from .research_integrity import clean_project_title, build_evidence_ledger, plan_queries, EVIDENCE_POLICY
 
 TOPIC_TTL_HOURS = 12
 PULSE_TTL_HOURS = 6
@@ -144,6 +129,8 @@ def _result_to_fact(item: Dict[str, Any], source_label: str = '') -> Optional[Di
         'source': _clean(raw_source if isinstance(raw_source, str) else source_label, 80),
         'url': _clean(item.get('link') or item.get('url'), 300),
         'date': _clean(item.get('date') or item.get('published_at'), 40),
+        'content_level': 'search_snippet',
+        'verification_status': 'unverified',
     }
 
 
@@ -155,8 +142,7 @@ def search_topic(topic: str, *, max_results: int = MAX_TOPIC_SOURCES,
     data = serp_lookup._get({  # noqa: SLF001 - نفس الوحدة، نستخدم نداءها الداخلي
         'engine': 'google',
         'q': topic,
-        'hl': 'ar',
-        'gl': 'sd',
+        'hl': 'ar' if re.search(r'[\u0600-\u06ff]', topic) else 'en',
         'num': max(4, min(int(max_results), 10)),
     }, timeout=timeout)
     facts: List[Dict[str, str]] = []
@@ -183,8 +169,7 @@ def search_news(topic: str, *, max_results: int = MAX_NEWS_SOURCES,
     data = serp_lookup._get({  # noqa: SLF001
         'engine': 'google_news',
         'q': topic,
-        'hl': 'ar',
-        'gl': 'sd',
+        'hl': 'ar' if re.search(r'[\u0600-\u06ff]', topic) else 'en',
         'tbs': window,
     }, timeout=timeout)
     facts: List[Dict[str, str]] = []
@@ -209,7 +194,7 @@ def gather_topic(topic: str, *, with_news: bool = True,
     query = _clean(topic, 240)
     if not query:
         return {'ok': False, 'error': 'لا يوجد موضوع للبحث', 'facts': [], 'news': []}
-    cache_name = f'topic::{query}::{int(with_news)}::{max_results}'
+    cache_name = f'topic::evidence-v1::{query}::{int(with_news)}::{max_results}'
     if use_cache:
         cached = _cache_read(cache_name, TOPIC_TTL_HOURS)
         if cached:
@@ -223,6 +208,8 @@ def gather_topic(topic: str, *, with_news: bool = True,
         'facts': [],
         'news': [],
         'queries': [query],
+        'query_plan': plan_queries(query),
+        'executed_angles': ['baseline'],
         'errors': [],
     }
     try:
@@ -236,6 +223,8 @@ def gather_topic(topic: str, *, with_news: bool = True,
             payload['ok'] = payload['ok'] or bool(payload['news'])
         except Exception as exc:  # noqa: BLE001
             payload['errors'].append(f'بحث الأخبار: {exc}')
+    payload['evidence_ledger'] = build_evidence_ledger(
+        payload['facts'] + payload['news'], retrieved_at=payload['fetched_at'])
     if payload['ok']:
         try:
             _cache_write(cache_name, payload)
@@ -319,19 +308,22 @@ def gather_for_simulation(requirement: str, *, title: str = '',
                           sim_dir: Optional[str] = None,
                           use_cache: bool = True) -> Dict[str, Any]:
     """يجمع حزمة البحث لمحاكاة كاملة: الموضوع + (إن كان سودانيًا) النبض المحلي."""
-    main_query = _clean(requirement, 220) or _clean(title, 220)
+    clean_title = clean_project_title(_clean(title, 200))
+    main_query = _clean(requirement, 220) or clean_title
     bundle: Dict[str, Any] = {
         'fetched_at': _now().isoformat(),
         'requirement': _clean(requirement, 1200),
-        'title': _clean(title, 200),
+        'title': clean_title,
         'topic': gather_topic(main_query, use_cache=use_cache) if main_query else None,
         'pulse': None,
         'ok': False,
         'errors': [],
     }
-    # النبض السوداني يُجمع دائمًا: الوكلاء سودانيون حتى لو كان الموضوع عالميًا،
-    # ولا يصحّ أن يتكلموا عن الدنيا وهم لا يعرفون ما يجري في بلدهم.
-    bundle['pulse'] = sudan_pulse(use_cache=use_cache)
+    # Local enrichment is opt-in by explicit geographic context, never by
+    # language, currency, profession, or an unrelated publisher name.
+    scope = f'{requirement} {clean_title}'.casefold()
+    if re.search(r'السودان|سوداني|\bsudan(?:ese)?\b', scope):
+        bundle['pulse'] = sudan_pulse(use_cache=use_cache)
     bundle['ok'] = bool((bundle['topic'] or {}).get('ok') or (bundle['pulse'] or {}).get('ok'))
     if sim_dir:
         save(sim_dir, bundle)
@@ -350,7 +342,9 @@ def _fact_lines(facts: Sequence[Dict[str, str]], limit: int = 8) -> List[str]:
         meta = ' — '.join([part for part in (source, date) if part])
         body = f'{title}. {snippet}'.strip()
         body = body[:300]
-        lines.append(f'- {body}' + (f' [{meta}]' if meta else ''))
+        url = fact.get('url') or ''
+        label = ' | '.join(part for part in (meta, url) if part)
+        lines.append(f'- {body}' + (f' [{label}]' if label else ''))
     return lines
 
 
@@ -366,7 +360,7 @@ def prompt_block(bundle: Optional[Dict[str, Any]], *, max_facts: int = 8) -> str
 
     parts: List[str] = []
     if facts or news:
-        parts.append('## وقائع من الويب عن الموضوع (بحث فعلي، اليوم)')
+        parts.append('## نتائج بحث عن الموضوع — مقتطفات غير متحقق منها بالكامل')
         lines = _fact_lines(facts, max_facts)
         lines += _fact_lines(news, max(2, max_facts - len(lines)))
         parts.extend(lines)
@@ -377,6 +371,7 @@ def prompt_block(bundle: Optional[Dict[str, Any]], *, max_facts: int = 8) -> str
         return ''
     parts.append(
         '\n### كيف تستخدم هذه الوقائع\n'
+        '- نتائج البحث مقتطفات وليست قراءة كاملة للمصادر، ولا تثبت وحدها صحة الادعاء أو تمثيل المجتمع.\n'
         '- استخدم هذه المعلومات لفهم الموضوع بعمق: الأسماء، الأرقام الرسمية المذكورة، '
         'الجهات، التواريخ، وما يشتكي منه الناس فعلًا.\n'
         '- لا تخترع رقمًا أو خبرًا أو اسمًا غير مذكور هنا أو في المستند. إن لم تجد '
@@ -385,6 +380,7 @@ def prompt_block(bundle: Optional[Dict[str, Any]], *, max_facts: int = 8) -> str
         '- اربط الموضوع بما يعيشه الناس: السعر، الوقت، الطريق، الكهرباء، البنك، '
         'الأمن، العمل — لا الكلمات الكبيرة وحدها.'
     )
+    parts.append(EVIDENCE_POLICY)
     return '\n'.join(parts).strip()
 
 

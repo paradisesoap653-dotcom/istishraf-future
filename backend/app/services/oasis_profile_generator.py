@@ -17,6 +17,7 @@ from datetime import datetime
 
 from openai import OpenAI
 from ..config import Config
+from .research_integrity import EVIDENCE_POLICY
 from ..utils.logger import get_logger
 from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from ..utils.openai_chat_compat import create_chat_completion, extract_chat_completion_text
@@ -777,7 +778,7 @@ class OasisProfileGenerator:
             "بلا أي حروف صينية أو إنجليزية داخل الحقول النصية (عدا gender و mbti). "
             "لا تستخدم أسطرًا جديدة غير مهروبة داخل القيم."
         )
-        return f"{base_prompt}\n\n{get_language_instruction()}"
+        return f"{base_prompt}\n\n{get_language_instruction()}\n{EVIDENCE_POLICY}"
     
     def _build_individual_persona_prompt(
         self,
@@ -840,14 +841,13 @@ class OasisProfileGenerator:
         return block
 
     def _culture_hint(self) -> str:
-        """توجيه سوداني لبناء الشخصيات (يُهمَل بهدوء إن تعذّر التحميل)."""
-        try:
-            from . import sudanese_culture
-
-            return (sudanese_culture.persona_block()
-                    + '\n' + sudanese_culture.street_persona_block())
-        except Exception:  # noqa: BLE001
-            return 'اجعل الشخصية واقعية ومتنوعة ولا تُعمّم على قبيلة أو جهة.'
+        """Use only study-specific context; never impose a national persona."""
+        return (
+            'استمد اللغة والبيئة والقيود من سياق الدراسة المرفق فقط. '
+            'إن لم يُحدد البلد أو الفئة فلا تخترعهما. '
+            'نوّع الدوافع والمواقف داخل الفئة نفسها ولا تستنتجها من الهوية. '
+            'هذه شخصية اصطناعية لاستكشاف فرضيات وليست ممثلاً إحصائياً للمجتمع.'
+        )
 
     def _build_group_persona_prompt(
         self,
