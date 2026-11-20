@@ -3,6 +3,9 @@
 Search snippets are retained as unverified retrieval records, not established
 facts. Several query angles are executed inside a hard call budget; angles that
 the budget did not reach are recorded as *not executed*, never implied.
+A small number of pages may be retrieved (limits in page_retrieval) and the
+snippets are then checked for textual support against that retrieved text.
+Retrieval is not verification: it proves reachability, not truth.
 Local Sudan enrichment is conditional; there is no default study country.
 """
 
@@ -15,6 +18,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import claim_check
+from . import page_retrieval
 from . import serp_lookup
 from .research_integrity import (
     EVIDENCE_POLICY,
@@ -30,6 +35,7 @@ TOPIC_TTL_HOURS = 12
 PULSE_TTL_HOURS = 6
 MAX_TOPIC_SOURCES = 8
 MAX_NEWS_SOURCES = 6
+DEFAULT_PAGE_FETCHES = 2
 
 # كلمات تدلّ على أن الموضوع سوداني (فنضيف النبض المحلي)
 SUDAN_HINTS = (
@@ -217,6 +223,12 @@ def search_budget() -> Dict[str, Any]:
     return resolve_search_budget({k: v for k, v in overrides.items() if v is not None})
 
 
+def page_budget() -> Dict[str, Any]:
+    return page_retrieval.resolve_page_budget({
+        'max_pages': _env_number('ISTISHRAF_PAGE_FETCHES') or DEFAULT_PAGE_FETCHES,
+    })
+
+
 def search_multi_angle(topic: str, *, budget: Optional[Dict[str, Any]] = None,
                        searcher=None, timeout: Optional[float] = None) -> Dict[str, Any]:
     """ينفّذ زوايا البحث المتاحة داخل الميزانية، ويسجّل ما لم يُنفَّذ بصراحة.
@@ -285,16 +297,18 @@ def search_multi_angle(topic: str, *, budget: Optional[Dict[str, Any]] = None,
 
 def gather_topic(topic: str, *, with_news: bool = True,
                  use_cache: bool = True, max_results: int = MAX_TOPIC_SOURCES,
-                 multi_angle: bool = True,
+                 multi_angle: bool = True, retrieve_pages: bool = True,
                  budget: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """حزمة بحث كاملة عن موضوع واحد (مع ذاكرة مؤقتة وحدود صريحة)."""
     query = _clean(topic, 240)
     if not query:
         return {'ok': False, 'error': 'لا يوجد موضوع للبحث', 'facts': [], 'news': []}
     budget = budget or search_budget()
+    pages_budget = page_budget()
     cache_name = (f'topic::{CACHE_VERSION}::{query}::{int(with_news)}::{max_results}'
-                  f'::{int(multi_angle)}'
-                  f'::q{budget["max_query_calls"]}::n{budget["max_news_calls"]}')
+                  f'::{int(multi_angle)}::{int(retrieve_pages)}'
+                  f'::q{budget["max_query_calls"]}::n{budget["max_news_calls"]}'
+                  f'::p{pages_budget["max_pages"]}')
     if use_cache:
         cached = _cache_read(cache_name, TOPIC_TTL_HOURS)
         if cached:
@@ -312,6 +326,8 @@ def gather_topic(topic: str, *, with_news: bool = True,
         'executed_angles': [],
         'search_report': {},
         'errors': [],
+        'pages': [],
+        'verification': {},
         'evidence_ledger': {},
     }
     try:
@@ -356,12 +372,48 @@ def gather_topic(topic: str, *, with_news: bool = True,
     payload['evidence_ledger'] = build_evidence_ledger(
         payload['facts'] + payload['news'], retrieved_at=payload['fetched_at'])
 
+    if retrieve_pages:
+        payload['pages'] = _retrieve_source_pages(payload['evidence_ledger'], pages_budget)
+        payload['evidence_ledger'] = _apply_pages(payload['evidence_ledger'], payload['pages'])
+        payload['verification'] = claim_check.verify_snippets(
+            payload['evidence_ledger'].get('sources') or [], payload['pages'])
+
     if payload['ok']:
         try:
             _cache_write(cache_name, payload)
         except Exception:
             pass
     return payload
+
+
+def _retrieve_source_pages(ledger: Dict[str, Any], pages_budget: Dict[str, Any]) -> List[Dict[str, Any]]:
+    urls = [source.get('url') for source in (ledger.get('sources') or []) if source.get('url')]
+    try:
+        return page_retrieval.retrieve_pages(urls, budget=pages_budget)['pages']
+    except Exception:  # noqa: BLE001 - تعذّر السحب لا يوقف البحث
+        return []
+
+
+def _apply_pages(ledger: Dict[str, Any], pages: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """يرفع مستوى المصدر إلى «نص كامل» فقط إن سُحب فعلًا، ويصحّح حدود السجلّ."""
+    fetched = {str(page.get('url')): page for page in (pages or []) if page.get('status') == 'fetched'}
+    sources = ledger.get('sources') or []
+    for source in sources:
+        page = fetched.get(str(source.get('url')))
+        if page:
+            source['content_level'] = 'full_page'
+            source['retrieved_characters'] = int(page.get('chars') or 0)
+            source['page_truncated'] = bool(page.get('truncated'))
+        else:
+            source['content_level'] = 'search_snippet'
+    if fetched:
+        limitations = [item for item in (ledger.get('limitations') or [])
+                       if 'full pages have not been retrieved' not in item]
+        limitations.insert(0, f'Full text retrieved for {len(fetched)} of {len(sources)} sources; '
+                              'the rest are search snippets only.')
+        ledger['limitations'] = limitations
+    return ledger
+
 
 
 def sudan_pulse(*, use_cache: bool = True) -> Dict[str, Any]:
@@ -498,6 +550,28 @@ def prompt_block(bundle: Optional[Dict[str, Any]], *, max_facts: int = 8) -> str
     if pulse_news:
         parts.append('\n## ما يجري في السودان الآن (أخبار حديثة)')
         parts.extend(_fact_lines(pulse_news, 6))
+    pages = topic.get('pages') or []
+    read = [page for page in pages if page.get('status') == 'fetched' and (page.get('text') or '').strip()]
+    if read:
+        parts.append('\n## مقاطع من نصوص قرأناها بالكامل (ليست كل الصفحة)')
+        for page in read[:2]:
+            excerpt = ' '.join(str(page.get('text'))[:700].split())
+            parts.append(f"- {excerpt} [نص مقروء: {page.get('url')}]")
+    blocked = [page for page in pages if page.get('status') in {'blocked', 'error', 'skipped'}]
+    if blocked:
+        reasons = '، '.join(sorted({str(page.get('error') or page.get('status')) for page in blocked}))
+        parts.append(f'\n(لم نقرأ {len(blocked)} صفحة: {reasons}. لا تُنسب إليها معلومات.)')
+    verification = topic.get('verification') or {}
+    counts = verification.get('counts') or {}
+    if counts:
+        parts.append(
+            '\n### حالة نقل المقتطفات\n'
+            f"- مقتطفات طابقت نص الصفحة: {counts.get('confirmed_in_page', 0)}، "
+            f"لم نجدها في الصفحة: {counts.get('not_found_in_page', 0)}، "
+            f"صفحتها لم تُقرأ: {counts.get('page_not_retrieved', 0)}.\n"
+            '- «لم نجدها في الصفحة» تعني: لا تنقلها كاقتباس حرفي؛ أعد صياغتها كادعاء منقول '
+            'بحذر أو تجاوزها.'
+        )
     if not parts:
         return ''
     parts.append(
@@ -537,6 +611,9 @@ def summary_line(bundle: Optional[Dict[str, Any]]) -> str:
         if skipped:
             angles_bit += f' ({len(skipped)} زاوية لم تنفَّذ لضيق الميزانية)'
         bits.append(angles_bit)
+    read_pages = len([page for page in (topic.get('pages') or []) if page.get('status') == 'fetched'])
+    if read_pages:
+        bits.append(f'قراءة كاملة لـ{read_pages} صفحة')
     stamp = ''
     fetched = topic.get('fetched_at') or pulse.get('fetched_at')
     if fetched:
