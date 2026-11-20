@@ -1,0 +1,33 @@
+name: worker tick
+
+# ينبض العامل كل 5 دقائق بدل مرة واحدة في اليوم.
+# السبب: Vercel Hobby لا يسمح بجدولة أدقّ من يوم واحد، والمحاكاة لا تتقدّم
+# إلا حين ينفّذ العامل مهام الطابور (/api/worker/tick).
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: worker-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Tick the worker
+        env:
+          WORKER_TOKEN: ${{ secrets.WORKER_TOKEN }}
+        run: |
+          if [ -z "$WORKER_TOKEN" ]; then
+            echo "::error::السر WORKER_TOKEN غير مضبوط في إعدادات المستودع"
+            exit 1
+          fi
+          curl -sS --max-time 290 -X POST \
+            -H "Authorization: Bearer $WORKER_TOKEN" \
+            "https://istishraf-future.vercel.app/api/worker/tick?budget=280" \
+            | head -c 2000
+          echo
