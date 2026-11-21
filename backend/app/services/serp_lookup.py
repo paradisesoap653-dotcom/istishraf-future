@@ -25,6 +25,7 @@ _TIMEOUT = 45.0
 
 GEO_LABELS = {
     'SD': 'السودان',
+    'US': 'الولايات المتحدة',
     'SA': 'السعودية',
     'AE': 'الإمارات',
     'EG': 'مصر',
@@ -105,14 +106,44 @@ def facebook_profile(reference: str) -> Dict[str, Any]:
     }
 
 
-def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
-                  timeout: float = _TIMEOUT) -> Dict[str, Any]:
-    """ملخّص اهتمام البحث من Google Trends (متوسط، قمة، اتجاه)."""
-    word = clean_project_title(keyword)
-    if not word:
-        raise ValueError('أدخل الكلمة التي تريد قياس اهتمام الناس بها')
-    geo = (geo or 'SD').strip().upper()[:2]
-    months = max(1, min(int(months or 3), 12))
+_SEGMENT_SPLIT = re.compile(r'[—–\-:|/\\،,؛;«»()\[\]]')
+
+
+def _keyword_ladder(word: str) -> List[str]:
+    """كلمات مرشّحة من الأخصّ إلى الأعمّ: الجملة، ثم أوّل مقطع، ثم أوّل كلمتين، ثم كلمة واحدة."""
+    base = ' '.join(str(word or '').split())
+    out: List[str] = []
+
+    def add(value: str) -> None:
+        item = ' '.join(str(value or '').split()).strip(' -—–:|/،,;؛')
+        if item and item not in out:
+            out.append(item)
+
+    add(base)
+    head = _SEGMENT_SPLIT.split(base)[0] or base
+    add(head)
+    tokens = head.split()
+    if len(tokens) > 1:
+        add(' '.join(tokens[:2]))
+        add(tokens[0])
+    btokens = base.split()
+    if len(btokens) > 2:
+        add(' '.join(btokens[:2]))
+        add(btokens[0])
+    return out
+
+
+_NO_DATA_MARKERS = ("hasn't returned any results", 'returned any results',
+                    'لم يُرجع بيانات كافية')
+
+
+def _is_empty_result(exc: Exception) -> bool:
+    """هل الفشل سببه أن جوجل لا يملك بيانات عن الكلمة (لا خطأ في الخدمة)؟"""
+    text = str(exc)
+    return any(marker in text for marker in _NO_DATA_MARKERS)
+
+
+def _trend_values(word: str, geo: str, months: int, timeout: float) -> List[int]:
     data = _get({
         'engine': 'google_trends',
         'q': word,
@@ -129,6 +160,10 @@ def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
             values.append(extracted)
     if not values:
         raise RuntimeError('جوجل لم يُرجع بيانات كافية عن هذه الكلمة في هذا البلد')
+    return values
+
+
+def _describe(values: List[int]) -> Dict[str, Any]:
     average = round(sum(values) / len(values), 1)
     peak = max(values)
     latest = values[-1]
@@ -155,15 +190,73 @@ def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
     else:
         level = 'مرتفع'
     return {
-        'keyword': word,
-        'geo': geo,
-        'geo_label': GEO_LABELS.get(geo, geo),
-        'months': months,
         'average': average,
         'peak': peak,
         'latest': latest,
         'direction': direction,
         'level': level,
         'points': len(values),
-        'source': 'google_trends',
     }
+
+
+def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
+                  timeout: float = _TIMEOUT) -> Dict[str, Any]:
+    """ملخّص اهتمام البحث من Google Trends (متوسط، قمة، اتجاه).
+
+    لماذا سلّم المحاولات: جوجل يُرجع «لا نتائج» لجُمل طويلة أو كلمات قليلة الحجم
+    في بلد صغير. فبدل أن نفشل أمام المستخدم، نُقصّر الكلمة ثم نوسّع النطاق
+    (البلد ← الولايات المتحدة ← العالم) ونسجّل بصراحة أي كلمة ونطاق استُخدما.
+    """
+    word = clean_project_title(keyword)
+    if not word:
+        raise ValueError('أدخل الكلمة التي تريد قياس اهتمام الناس بها')
+    geo0 = (geo or 'SD').strip().upper()[:2]
+    months = max(1, min(int(months or 3), 12))
+
+    candidates = _keyword_ladder(word)
+    exact = candidates[0]
+    shorter = candidates[1:] or candidates
+    # خطة المحاولات: الجملة كما هي في البلد المطلوب أولًا (وهي الأدقّ)،
+    # ثم كلمة أقصر في البلد ثم في نطاق أوسع.
+    plan = [(exact, geo0)]
+    for candidate in shorter[:2]:
+        for scope in [geo0, 'US', '']:
+            pair = (candidate, scope)
+            if pair not in plan:
+                plan.append(pair)
+    plan = plan[:6]  # كل محاولة تكلّف رصيد بحث، فلا نُفرط
+
+    attempts: List[str] = []
+    for candidate, scope in plan:
+        try:
+            values = _trend_values(candidate, scope, months, timeout)
+        except RuntimeError as exc:
+            if not _is_empty_result(exc):
+                raise  # خطأ في الخدمة نفسها (مفتاح/شبكة): لا نُكرّره
+            attempts.append(f'{candidate} / {GEO_LABELS.get(scope, scope or "العالم")}')
+            continue
+        summary = _describe(values)
+        summary.update({
+            'keyword': candidate,
+            'requested_keyword': word,
+            'geo': scope,
+            'geo_label': GEO_LABELS.get(scope, scope or 'العالم'),
+            'months': months,
+            'source': 'google_trends',
+        })
+        notes: List[str] = []
+        if candidate != word:
+            notes.append(f'قِسنا «{candidate}» بدل الجملة الكاملة، '
+                         'لأن جوجل لا يملك بيانات كافية عن الجملة الطويلة.')
+        if scope != geo0:
+            notes.append(f'النطاق الجغرافي: {summary["geo_label"]}، '
+                         'لأن البيانات في النطاق المطلوب غير كافية.')
+        if notes:
+            summary['note'] = ' '.join(notes)
+        return summary
+
+    raise RuntimeError(
+        'جوجل لا يملك بيانات كافية عن هذه الكلمة في النطاقات المتاحة. '
+        'جرّب كلمة واحدة قصيرة (اسم شخص أو شركة) بدل جملة كاملة.'
+    )
+
