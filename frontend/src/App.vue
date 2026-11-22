@@ -46,6 +46,9 @@ html[data-theme="light"] {
   --border-strong: #94A3B8;
   --accent-orange: #FF4500;
   --card-shadow: 0 4px 18px rgba(15, 23, 42, 0.05);
+  /* أسطح المكوّنات: كانت غير معرّفة فيسقط التنسيق إلى #fff الأبيض */
+  --surface: #FFFFFF;
+  --surface-muted: #F8FAFC;
 }
 
 html[data-theme="dark"] {
@@ -60,6 +63,8 @@ html[data-theme="dark"] {
   --border-strong: #3B4B66;
   --accent-orange: #FF5722;
   --card-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  --surface: #131924;
+  --surface-muted: #1B2434;
 }
 
 /* Global reset */
@@ -392,4 +397,16 @@ html[data-theme="dark"] .badge-meta {
   color: var(--text-secondary) !important;
   border-color: var(--border-frame) !important;
 }
+html[data-theme="dark"] .pnums-glance-item,
+html[data-theme="dark"] .pnums-interest-line,
+html[data-theme="dark"] .pnums-chip {
+  background: var(--bg-subtle) !important;
+  color: var(--text-secondary) !important;
+}
+html[data-theme="dark"] .pnums-mini {
+  background: rgba(31, 111, 235, 0.22) !important;
+  border-color: var(--border-strong) !important;
+  color: #BFD3F5 !important;
+}
+html[data-theme="dark"] .pnums-note--err { color: #FF9B8A !important; }
 </style>
