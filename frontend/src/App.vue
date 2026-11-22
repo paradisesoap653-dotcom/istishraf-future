@@ -359,4 +359,37 @@ html[data-theme="dark"] .step-desc,
 html[data-theme="dark"] .panel-subtitle {
   color: var(--text-secondary) !important;
 }
+
+/* ── لوحة المحاكاة (Step3Simulation): كانت أسطحها بيضاء ثابتة (#FFF)
+   فتظهر مستطيلات ساطعة داخل الوضع الليلي، وأبرزها منطقة «بانتظار أفعال الوكلاء» */
+html[data-theme="dark"] .simulation-panel,
+html[data-theme="dark"] .control-bar,
+html[data-theme="dark"] .main-content-area,
+html[data-theme="dark"] .timeline-card,
+html[data-theme="dark"] .platform-status.active {
+  background-color: var(--bg-card) !important;
+  border-color: var(--border-frame) !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .timeline-header {
+  background-color: rgba(19, 25, 36, 0.92) !important;
+  border-bottom-color: var(--border-frame) !important;
+  color: var(--text-primary) !important;
+}
+html[data-theme="dark"] .waiting-state { color: var(--text-muted) !important; }
+html[data-theme="dark"] .waiting-state .pulse-ring { border-color: var(--border-strong) !important; }
+html[data-theme="dark"] .timeline-stats,
+html[data-theme="dark"] .total-count,
+html[data-theme="dark"] .content-text,
+html[data-theme="dark"] .platform-name {
+  color: var(--text-secondary) !important;
+}
+html[data-theme="dark"] .badge-post,
+html[data-theme="dark"] .badge-comment,
+html[data-theme="dark"] .badge-action,
+html[data-theme="dark"] .badge-meta {
+  background-color: var(--bg-subtle) !important;
+  color: var(--text-secondary) !important;
+  border-color: var(--border-frame) !important;
+}
 </style>
