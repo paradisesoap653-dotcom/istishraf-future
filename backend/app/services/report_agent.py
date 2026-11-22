@@ -2831,6 +2831,7 @@ class ReportManager:
         # سطر مدخلات صاحب المشروع: يُكتب حتمًا في رأس التقرير (لا نتركه للنموذج
         # حتى لا يُحذف أو يُنسى، وحتى يعرف القارئ أن هذه أرقام حقيقية لا افتراضات).
         inputs_header = ''
+        sim_id = None
         try:
             report = cls.get_report(report_id)
             sim_id = getattr(report, "simulation_id", None) if report else None
@@ -2849,9 +2850,19 @@ class ReportManager:
             logger.warning("تعذر إدراج سطر أرقام صاحب المشروع: %s", exc)
 
         # 构建报告头部
+        # أعداد التفاعلات الحقيقية: تُكتب حتمًا هنا، فلا يعتمد القارئ على جمع النموذج
+        counts_block = ''
+        try:
+            if sim_id:
+                _counts, _total = simulation_counts(sim_id)
+                counts_block = simulation_counts_block(_counts, _total)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر حساب أعداد المحاكاة: %s", exc)
+
         md_content = f"# {outline.title}\n\n"
         md_content += f"> {outline.summary}\n\n"
         md_content += inputs_header
+        md_content += counts_block
         md_content += f"---\n\n"
         
         # 按顺序读取所有章节文件
@@ -2871,10 +2882,32 @@ class ReportManager:
             report_obj = cls.get_report(report_id)
             sim_id = getattr(report_obj, "simulation_id", None) if report_obj else None
             known = _facts.load_for_simulation(sim_id) if sim_id else {}
-            # وسم الأرقام غير المسنودة قبل ترقية المراجع (المراجع تُستثنى تلقائيًا)
+            # ١) كشف أي عدد يخالف أعداد المحاكاة الحقيقية
+            try:
+                _counts2, _total2 = simulation_counts(sim_id) if sim_id else ({}, 0)
+                if _counts2:
+                    md_content, _flagged = flag_count_conflicts(md_content, _counts2, _total2)
+                    if _flagged:
+                        logger.info("وُسم %s سطرًا برقم مخالف للمحاكاة", _flagged)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("تعذر فحص تعارض أعداد المحاكاة: %s", exc)
+            # ٢) وسم الأرقام غير المسنودة قبل ترقية المراجع (المراجع تُستثنى تلقائيًا)
             if known:
                 try:
-                    md_content, _marked = mark_unsourced_numbers(md_content, known)
+                    owner_numbers: set = set()
+                    try:
+                        from . import platform_inputs as _pio
+                        from . import platforms as _pr2
+
+                        _owner_line = _pio.summary_line(_pio.load(sim_id), _pr2.ORDER)
+                        for _tok in _NUM_TOKEN_RE.finditer(_owner_line.translate(_DIGIT_MAP)):
+                            _d = _digits_of(_tok.group(0))
+                            if _d:
+                                owner_numbers.add(_d)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("تعذر قراءة أرقام صاحب المشروع: %s", exc)
+                    md_content, _marked = mark_unsourced_numbers(
+                        md_content, known, owner_numbers)
                     if _marked:
                         logger.info("وُسم %s سطرًا يحمل رقمًا بلا مصدر", _marked)
                 except Exception as exc:  # noqa: BLE001
@@ -3262,14 +3295,17 @@ def _token_backed(token: str, following: str, known_numbers: set) -> bool:
         return True
     is_percent = token.strip().endswith(("%", "٪"))
     year_like = len(digits) == 4 and digits[:2] in {"19", "20"}
-    if len(digits) < 3 and not is_percent:
+    tail = str(following or "").translate(_DIGIT_MAP).lower().strip()
+    has_multiplier = any(tail.startswith(word) for word, _ in _MULTIPLIERS)
+    if len(digits) < 3 and not is_percent and not has_multiplier:
         return True          # أرقام صغيرة (١، ٢، ٣) تُترك بلا وسم
     if year_like and not is_percent:
         return True          # ذكر السنة ليس ادّعاءً ماليًا
     return _canonical_number(token, following) in known_numbers or digits in known_numbers
 
 
-def mark_unsourced_numbers(text: str, known: Dict[str, Any]) -> Tuple[str, int]:
+def mark_unsourced_numbers(text: str, known: Dict[str, Any],
+                           extra_numbers: Optional[set] = None) -> Tuple[str, int]:
     """يضع 〔بلا مصدر〕 في نهاية أي سطر يحمل رقمًا غير مسنود.
 
     لا يُحذف شيء: القارئ يرى الرقم ويعرف أن لا مصدر له. وتُستثنى:
@@ -3281,6 +3317,8 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any]) -> Tuple[str, int]:
     if not text:
         return text, 0
     known_numbers = _known_numbers(known)
+    if extra_numbers:
+        known_numbers |= {str(n) for n in extra_numbers if str(n)}
     out: List[str] = []
     inside_input = False
     marked = 0
@@ -3294,7 +3332,7 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any]) -> Tuple[str, int]:
             inside_input = True
             out.append(line)
             continue
-        if inside_input or not stripped or UNSOURCED_TAG in stripped or "{{fact" in stripped:
+        if inside_input or not stripped or "〔" in stripped or "{{fact" in stripped:
             out.append(line)
             continue
         translated = stripped.translate(_DIGIT_MAP)
@@ -3309,3 +3347,95 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any]) -> Tuple[str, int]:
         out.append(line.rstrip() + " " + UNSOURCED_TAG)
         marked += 1
     return "\n".join(out), marked
+
+
+# ─────────────────────────────────────────────────────────────
+# أرقام المحاكاة: تُحسب هنا مرة واحدة ولا تُترك للنموذج
+# ─────────────────────────────────────────────────────────────
+COUNT_CONFLICT_TAG = "〔رقم يخالف بيانات المحاكاة〕"
+_COUNT_WORDS = ("تفاعل", "منشور", "رسال", "رد", "مشارك", "أفعال", "تعليق")
+_PLATFORM_ALIASES = {
+    "فيسبوك": ("فيسبوك", "facebook", "فيسبوك"),
+    "واتساب": ("واتساب", "whatsapp"),
+    "تيك توك": ("تيك توك", "tiktok", "تيكتوك"),
+    "تويتر": ("تويتر", "twitter", "إكس", " x "),
+    "ريديت": ("ريديت", "reddit"),
+}
+
+
+def simulation_counts(sim_id: str) -> Tuple[Dict[str, int], int]:
+    """أعداد الأفعال الحقيقية لكل منصّة من ملفات التشغيل (نفس مصدر الشاشة)."""
+    from . import platforms as platform_registry
+
+    counts: Dict[str, int] = {}
+    total = 0
+    for platform in platform_registry.ORDER:
+        raw = storage.read_text_fresh(f"simulations/{sim_id}/{platform}/actions.jsonl") or ""
+        number = 0
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if "event_type" in item or "agent_id" not in item:
+                continue
+            number += 1
+        if number:
+            counts[platform_registry.label(platform)] = number
+            total += number
+    return counts, total
+
+
+def simulation_counts_block(counts: Dict[str, int], total: int) -> str:
+    """سطر حتمي في رأس التقرير: مرجع القارئ عند أي تعارض."""
+    if not counts:
+        return ""
+    mix = "، ".join(f"{name} {value}" for name, value in counts.items())
+    return (
+        "> **توزيع التفاعلات (محسوب من تشغيل المحاكاة، لا من نص النموذج):**\n"
+        f"> • {mix}\n"
+        f"> • الإجمالي {total}\n\n"
+    )
+
+
+def _alias_in_line(label: str, lowered: str) -> bool:
+    aliases = _PLATFORM_ALIASES.get(label, (label,))
+    return any(alias.strip() in lowered for alias in aliases)
+
+
+def flag_count_conflicts(text: str, counts: Dict[str, int], total: int) -> Tuple[str, int]:
+    """يوسم أي سطر يذكر عددًا لمنصّة يخالف العدد الحقيقي.
+
+    لا نُصحّح النص بدل النموذج ولا نحذفه: نضع العلامة ليعرف القارئ أن الرقم
+    في هذا السطر لا يطابق ما جرى فعلًا في المحاكاة.
+    """
+    if not text or not counts:
+        return text, 0
+    out: List[str] = []
+    flagged = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        lowered = stripped.translate(_DIGIT_MAP).lower()
+        if (not stripped or "〔" in stripped or stripped.startswith("#")
+                or not any(word in lowered for word in _COUNT_WORDS)):
+            out.append(line)
+            continue
+        numbers = {_digits_of(m.group(0)) for m in _NUM_TOKEN_RE.finditer(lowered)}
+        wrong = False
+        for label, real in counts.items():
+            if not _alias_in_line(label, lowered):
+                continue
+            if str(real) not in numbers:
+                wrong = True
+                break
+        if not wrong and "إجمال" in lowered and numbers and str(total) not in numbers:
+            wrong = True
+        if wrong:
+            out.append(line.rstrip() + " " + COUNT_CONFLICT_TAG)
+            flagged += 1
+        else:
+            out.append(line)
+    return "\n".join(out), flagged
