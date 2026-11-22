@@ -13,7 +13,7 @@ import os
 import json
 import time
 import re
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -2871,6 +2871,14 @@ class ReportManager:
             report_obj = cls.get_report(report_id)
             sim_id = getattr(report_obj, "simulation_id", None) if report_obj else None
             known = _facts.load_for_simulation(sim_id) if sim_id else {}
+            # وسم الأرقام غير المسنودة قبل ترقية المراجع (المراجع تُستثنى تلقائيًا)
+            if known:
+                try:
+                    md_content, _marked = mark_unsourced_numbers(md_content, known)
+                    if _marked:
+                        logger.info("وُسم %s سطرًا يحمل رقمًا بلا مصدر", _marked)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("تعذر وسم الأرقام غير الموثّقة: %s", exc)
             md_content, _used, _missing = _facts.render(md_content, known)
             if _used:
                 sources_md = _facts.sources_block(known, _used)
@@ -2889,6 +2897,7 @@ class ReportManager:
         return md_content
     
     @classmethod
+
     def _post_process_report(cls, content: str, outline: ReportOutline) -> str:
         """
         后处理报告内容
@@ -2927,9 +2936,10 @@ class ReportManager:
                 level = len(heading_match.group(1))
                 title = heading_match.group(2).strip()
                 
-                # 检查是否是重复标题（在连续5行内出现相同内容的标题）
+                # 检查是否是重复标题：同一标题在整份报告中出现过就不再重复显示
+                # （كان الفحص محدودًا بخمسة أسطر، فظهرت أقسام مكرّرة متباعدة）
                 is_duplicate = False
-                for j in range(max(0, len(processed_lines) - 5), len(processed_lines)):
+                for j in range(len(processed_lines)):
                     prev_line = processed_lines[j].strip()
                     prev_match = re.match(r'^(#{1,6})\s+(.+)$', prev_line)
                     if prev_match:
@@ -3197,3 +3207,105 @@ class ReportManager:
             deleted = True
         
         return deleted
+
+# ─────────────────────────────────────────────────────────────
+# وسم الأرقام غير الموثّقة (الطبقة الثانية — الطريق «ب»: وسم لا حذف)
+# ─────────────────────────────────────────────────────────────
+UNSOURCED_TAG = "〔بلا مصدر〕"
+_DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+_NUM_TOKEN_RE = re.compile(r"\d[\d.,٬]*\s*[%٪]?")
+_INPUT_SECTION_MARKERS = ("أرقام مقدَّمة", "أرقام مقدمة", "صاحب المشروع (مدخل)", "مدخل)")
+_MULTIPLIERS = (
+    ("مليار", "000000000"), ("بليون", "000000000"), ("billion", "000000000"),
+    ("مليون", "000000"), ("million", "000000"),
+    ("ألف", "000"), ("الف", "000"), ("thousand", "000"),
+)
+
+
+def _digits_of(token: str) -> str:
+    """أرقام فقط، بلا فواصل ولا علامة نسبة."""
+    return re.sub(r"\D", "", str(token).translate(_DIGIT_MAP))
+
+
+def _canonical_number(token: str, following: str) -> str:
+    """يوحّد شكل الرقم: «500 ألف» و«500,000» ← 500000."""
+    digits = _digits_of(token)
+    if not digits:
+        return ""
+    tail_body = str(following or "").translate(_DIGIT_MAP).lower()[:14].strip()
+    for word, zeros in _MULTIPLIERS:
+        if tail_body.startswith(word):
+            if digits.endswith("000") and len(digits) > len(zeros) + 2:
+                break  # الرقم مكتوب كاملًا بالفعل (500,000) فلا نضاعفه
+            return digits + zeros
+    return digits
+
+
+def _known_numbers(known: Dict[str, Any]) -> set:
+    """كل الأرقام الواردة في الوقائع الموثّقة، بصيغة موحّدة."""
+    values = set()
+    for fact in (known or {}).values():
+        if not isinstance(fact, dict):
+            continue
+        for field in ("value", "quote"):
+            text = str(fact.get(field) or "").translate(_DIGIT_MAP)
+            for match in _NUM_TOKEN_RE.finditer(text):
+                value = _canonical_number(match.group(0), text[match.end():match.end() + 14])
+                if len(value) >= 3:
+                    values.add(value)
+    return values
+
+
+def _token_backed(token: str, following: str, known_numbers: set) -> bool:
+    digits = _digits_of(token)
+    if not digits:
+        return True
+    is_percent = token.strip().endswith(("%", "٪"))
+    year_like = len(digits) == 4 and digits[:2] in {"19", "20"}
+    if len(digits) < 3 and not is_percent:
+        return True          # أرقام صغيرة (١، ٢، ٣) تُترك بلا وسم
+    if year_like and not is_percent:
+        return True          # ذكر السنة ليس ادّعاءً ماليًا
+    return _canonical_number(token, following) in known_numbers or digits in known_numbers
+
+
+def mark_unsourced_numbers(text: str, known: Dict[str, Any]) -> Tuple[str, int]:
+    """يضع 〔بلا مصدر〕 في نهاية أي سطر يحمل رقمًا غير مسنود.
+
+    لا يُحذف شيء: القارئ يرى الرقم ويعرف أن لا مصدر له. وتُستثنى:
+    - العناوين،
+    - الأسطر التي تحمل مرجعًا {{fact:..}} (ستُرقّى لاحقًا)،
+    - أرقام صاحب المشروع (مدخلات وصفها هو)،
+    - أي رقم يطابق رقمًا واردًا في الوقائع الموثّقة.
+    """
+    if not text:
+        return text, 0
+    known_numbers = _known_numbers(known)
+    out: List[str] = []
+    inside_input = False
+    marked = 0
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            inside_input = any(marker in stripped for marker in _INPUT_SECTION_MARKERS)
+            out.append(line)
+            continue
+        if any(marker in stripped for marker in _INPUT_SECTION_MARKERS):
+            inside_input = True
+            out.append(line)
+            continue
+        if inside_input or not stripped or UNSOURCED_TAG in stripped or "{{fact" in stripped:
+            out.append(line)
+            continue
+        translated = stripped.translate(_DIGIT_MAP)
+        tokens = [m for m in _NUM_TOKEN_RE.finditer(translated) if _digits_of(m.group(0))]
+        if not tokens:
+            out.append(line)
+            continue
+        if all(_token_backed(m.group(0), translated[m.end():m.end() + 14], known_numbers)
+               for m in tokens):
+            out.append(line)
+            continue
+        out.append(line.rstrip() + " " + UNSOURCED_TAG)
+        marked += 1
+    return "\n".join(out), marked
