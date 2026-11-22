@@ -306,11 +306,22 @@ def summary_line(inputs: Dict[str, Dict[str, int]], platforms: Sequence[str],
     interest = interest_of(inputs)
     if interest:
         where = interest.get('geo_label') or interest.get('geo')
-        parts.append(
+        line = (
             f"اهتمام البحث على جوجل عن «{interest['keyword']}» ({where}، آخر {_num_ar(interest['months'])} أشهر): "
-            f"متوسط {_num_ar(interest['average'])} من ١٠٠، أعلى قمة {_num_ar(interest['peak'])}، "
+            f"متوسط {_num_ar(interest['average'])} من ١٠٠، "
             f"المستوى {interest['level'] or 'غير محدد'}، الاتجاه {interest['direction'] or 'مستقر'}"
         )
+        # لا نعرض «أعلى قمة» حين يكون المتوسط أقل من ٣: القمة حينها قفزة واحدة
+        # معزولة بين أصفار، وعرضها يوهم باهتمام لم يحدث.
+        try:
+            low = float(interest.get('average') or 0) < 3
+        except (TypeError, ValueError):
+            low = False
+        if low:
+            line += "، والبيانات ضئيلة جدًا فلا تصلح للحكم على حجم الاهتمام"
+        else:
+            line += f"، أعلى قمة {_num_ar(interest['peak'])}"
+        parts.append(line)
     if multiline:
         # كل رقم في سطر مستقل: في ملف PDF العربي يتشابك ترتيب الأجزاء إذا جاءت
         # في سطر واحد مع رقم تواصل وأرقام لاتينية.
