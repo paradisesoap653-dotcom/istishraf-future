@@ -880,11 +880,18 @@ def delete_simulation(simulation_id: str):
 
         removed_reports = 0
         try:
-            report = ReportManager.get_report_by_simulation(simulation_id)
-            if report and ReportManager.delete_report(report.report_id):
-                removed_reports += 1
+            from ..services.report_agent import delete_reports_for_simulation
+            removed_reports = delete_reports_for_simulation(simulation_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(f"delete report of {simulation_id} failed: {exc}")
+            logger.warning(f"delete reports of {simulation_id} failed: {exc}")
+        # احتياط: لو كان التقرير خارج الفهرس، احذفه بالمعرّف القادم من الواجهة
+        if removed_reports == 0:
+            explicit_report_id = (request.args.get('report_id') or '').strip()
+            try:
+                if explicit_report_id and ReportManager.delete_report(explicit_report_id):
+                    removed_reports += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"delete report {explicit_report_id} failed: {exc}")
 
         removed_sim = False
         try:
@@ -1103,7 +1110,9 @@ def get_simulation_history():
         return jsonify({
             "success": True,
             "data": enriched_simulations,
-            "count": len(enriched_simulations)
+            "count": len(enriched_simulations),
+            # العدد الحقيقي لكل المحاكاة (لا المقصوص بالـlimit)
+            "total": len(all_sims)
         })
         
     except Exception as e:
