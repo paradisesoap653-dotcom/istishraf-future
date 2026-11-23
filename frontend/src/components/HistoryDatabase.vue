@@ -19,6 +19,19 @@
         </button>
       </div>
 
+      <div class="rl-filters">
+        <input
+          v-model="search"
+          class="rl-search"
+          type="search"
+          placeholder="ابحث في اسم التقرير أو رقم المحاكاة…"
+        />
+        <input v-model="dateFilter" class="rl-date" type="date" title="اعرض تقارير يوم واحد" />
+        <button v-if="search || dateFilter" class="rl-clear" @click="search = ''; dateFilter = ''">
+          مسح الفلتر
+        </button>
+      </div>
+
       <div class="rl-tabs">
         <button class="rl-tab" :class="{ active: filter === 'reports' }" @click="filter = 'reports'">
           التقارير الجاهزة ({{ finalReports.length }})
@@ -81,7 +94,7 @@
         </div>
 
         <div v-if="visibleProjects.length === 0" class="rl-empty">
-          لا توجد تقارير جاهزة بعد. أول محاكاة تكتمل سيظهر تقريرها هنا مباشرة.
+          {{ (search || dateFilter) ? 'لا يوجد تقرير يطابق الفلتر. امسح الفلتر لعرض الكل.' : 'لا توجد تقارير جاهزة بعد. أول محاكاة تكتمل سيظهر تقريرها هنا مباشرة.' }}
         </div>
       </div>
     </div>
@@ -212,6 +225,8 @@ const bulkBusy = ref(false)
 const bulkDone = ref(0)
 const bulkTotal = ref(0)
 const totalSims = ref(0)  // العدد الحقيقي من الخادم (قد يتجاوز المقصوص)
+const search = ref('')      // بحث بالاسم
+const dateFilter = ref('')  // فلتر بتاريخ يوم واحد (YYYY-MM-DD)
 
 // مفتاح التكرار: نفس نص الطلب (بعد تنظيف المسافات) => تقرير مكرر
 const dedupeKey = (project) =>
@@ -219,13 +234,21 @@ const dedupeKey = (project) =>
 
 // الصفوف الزائدة: كل ما هو ليس الأحدث لكل نص طلب
 const duplicateRows = computed(() => {
-  const seen = new Set()
-  const extras = []
+  const groups = new Map()
   for (const project of projects.value) {
     const key = dedupeKey(project)
     if (!key) continue
-    if (seen.has(key)) extras.push(project)
-    else seen.add(key)
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key).push(project)
+  }
+  const extras = []
+  for (const list of groups.values()) {
+    if (list.length < 2) continue
+    // نُبقي الأحدث تاريخًا، ونحذف الأقدم — لا «أول صف في القائمة»
+    const sorted = list
+      .slice()
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    extras.push(...sorted.slice(1))
   }
   return extras
 })
@@ -312,7 +335,24 @@ const badgeText = (project) => {
   if (st === 'failed') return 'تعذّر التقرير'
   return 'لم يكتمل'
 }
-const visibleProjects = computed(() => (filter.value === 'reports' ? finalReports.value : projects.value))
+const baseProjects = computed(() => (filter.value === 'reports' ? finalReports.value : projects.value))
+
+// الأحدث أولًا دائمًا، ثم بحث بالاسم، ثم يوم محدّد
+const visibleProjects = computed(() => {
+  const q = search.value.trim().toLowerCase()
+  const day = dateFilter.value.trim()
+  return baseProjects.value
+    .slice()
+    .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .filter((p) => {
+      if (q) {
+        const hay = `${reportTitle(p)} ${p.simulation_requirement || ''} ${p.simulation_id || ''}`.toLowerCase()
+        if (!hay.includes(q)) return false
+      }
+      if (day && formatDate(p.created_at) !== day) return false
+      return true
+    })
+})
 let observer = null
 let isAnimating = false  // 动画锁，防止闪烁
 let expandDebounceTimer = null  // 防抖定时器
@@ -579,7 +619,9 @@ const loadHistory = async () => {
     // ثابتًا لا ينقص أبدًا بعد الحذف، لأن صفًّا جديدًا يحلّ محلّ المحذوف.
     const response = await getSimulationHistory(200)
     if (response.success) {
-      projects.value = response.data || []
+      projects.value = (response.data || [])
+        .slice()
+        .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
       totalSims.value = Number(response.total) || projects.value.length
     }
   } catch (error) {
@@ -1531,6 +1573,25 @@ onUnmounted(() => {
 
 .rl-title { font-size: 17px; font-weight: 800; color: var(--text-primary, #0F172A); }
 .rl-count { font-size: 12px; color: var(--text-muted, #64748B); }
+
+.rl-filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+.rl-search, .rl-date {
+  padding: 8px 12px;
+  font-family: inherit; font-size: 12.5px;
+  color: var(--text-primary, #0F172A);
+  background: var(--bg-card, #fff);
+  border: 1px solid var(--border-frame, #CBD5E1);
+  border-radius: 10px;
+}
+.rl-search { flex: 1 1 240px; min-width: 0; }
+.rl-date { flex: 0 0 auto; }
+.rl-clear {
+  padding: 7px 12px; border-radius: 10px; cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 700;
+  color: var(--text-secondary, #475569);
+  background: transparent;
+  border: 1px solid var(--border-frame, #CBD5E1);
+}
 
 .rl-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 
