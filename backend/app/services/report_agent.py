@@ -3591,6 +3591,43 @@ def forget_report_index(report_id: str) -> None:
         logger.warning("تعذر تحديث فهرس التقارير بعد الحذف: %s", exc)
 
 
+def reports_for_simulation(simulation_id: str) -> List[str]:
+    """كل معرّفات تقارير محاكاة واحدة، من الفهرس مباشرة بلا مسح مجلدات."""
+    sim = str(simulation_id or "").strip()
+    if not sim:
+        return []
+    try:
+        data = storage.read_json_fresh(_reports_index_path()) or {}
+        entries = data.get("reports") if isinstance(data, dict) else None
+        if not isinstance(entries, dict):
+            return []
+        return [
+            rid for rid, meta in entries.items()
+            if isinstance(meta, dict) and str(meta.get("simulation_id") or "") == sim
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر قراءة فهرس التقارير للمحاكاة %s: %s", sim, exc)
+        return []
+
+
+def delete_reports_for_simulation(simulation_id: str) -> int:
+    """يحذف كل تقارير محاكاة واحدة. يعيد عدد التقارير المحذوفة.
+
+    لماذا «كل» التقارير: تكرار التشغيل لنفس الطلب قد يولّد أكثر من تقرير
+    لنفس simulation_id، فحذف تقرير واحد يُبقي الصف ظاهرًا في القائمة.
+    """
+    removed = 0
+    for report_id in reports_for_simulation(simulation_id):
+        try:
+            if ReportManager.delete_report(report_id):
+                removed += 1
+            else:
+                forget_report_index(report_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر حذف التقرير %s: %s", report_id, exc)
+    return removed
+
+
 def _indexed_report_ids() -> List[str]:
     try:
         data = storage.read_json_fresh(_reports_index_path()) or {}
