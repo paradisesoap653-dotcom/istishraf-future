@@ -1043,6 +1043,9 @@ def get_simulation_history():
             s for s in manager.list_simulations()
             if UserStore.can_access('simulation', s.simulation_id, current_user)
         ]
+        # الأحدث أولًا: كان الترتيب أبجديًا بمعرّف المحاكاة، فيغيب التقرير
+        # الجديد وسط القديم ويبدو كأنه لم يُحفظ.
+        all_sims.sort(key=lambda s: str(getattr(s, 'created_at', '') or ''), reverse=True)
         simulations = all_sims[:limit]
         
         # 增强模拟数据，只从 Simulation 文件读取
