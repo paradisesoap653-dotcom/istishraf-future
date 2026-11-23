@@ -1,662 +1,505 @@
 """
-نظام إدارة المستخدمين والصلاحيات لتطبيق «استشراف المستقبل»
-يعتمد على SQLite المدمج لحفظ الحسابات وربط المشاريع والمحاكاة بكل مستخدم بشكل مستقل وآمن
+طبقة التخزين لتطبيق «استشراف المستقبل».
+
+المشكلة التي تحلّها: كان كل شيء (الحسابات، المشاريع، الملفات المرفوعة،
+المهام، المحاكاة) يُخزَّن في ``/tmp`` على serverless، وهو نظام ملفات مؤقت
+يُفقد مع كل cold start أو إعادة نشر. النتيجة: مشاريع المستخدم تختفي،
+والحسابات تُفقد، والنظام يتصرّف كأنه بلا مستخدمين.
+
+الحل: **مرآة دائمة**. الملفات تُكتب على القرص المحلي (كي تعمل المكتبات التي
+تحتاج مسارات حقيقية: pandas وpypdf وopenpyxl...) وتُنسخ في الوقت نفسه إلى
+جدول ``stored_files`` في PostgreSQL (Neon). وعند القراءة، إن لم يكن الملف
+موجودًا محليًا (نسخة جديدة أو عامل آخر)، يُجلَب من Postgres ويُعاد إنشاؤه
+محليًا ثم يُقرأ.
+
+بهذا لا تتغير توقيعات الدوال ولا مسارات HTTP، لكن المحتوى يعيش.
+
+المتغير المطلوب: ``DATABASE_URL``. عند غيابه تبقى الطبقة محلية بالكامل
+(سلوك التطوير)، ويعلن ``/health`` أن التخزين غير دائم.
 """
 
+from __future__ import annotations
+
+import atexit
+import json
 import os
-import re
-import sqlite3
+import shutil
 import threading
-from datetime import datetime
-from typing import Optional, Dict, Any, List
-from flask import request
-from werkzeug.security import generate_password_hash, check_password_hash
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from typing import Any, Dict, List, Optional
 
-from ..config import Config
-from . import storage
+from ..utils.logger import get_logger
 
-_db_lock = threading.Lock()
-TOKEN_MAX_AGE_SECONDS = 30 * 24 * 3600  # 30 days
+logger = get_logger("mirofish.storage")
 
+_schema_ready = False
+_schema_lock = threading.Lock()
+_pool = None
+_pool_lock = threading.Lock()
 
-class _SqliteUserStore:
-    """مدير قاعدة بيانات المستخدمين وملكية الموارد (نسخة SQLite للتطوير)"""
-
-    @staticmethod
-    def _db_path() -> str:
-        os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
-        return os.path.join(Config.UPLOAD_FOLDER, 'istishraf_users.db')
-
-    @classmethod
-    def _conn(cls) -> sqlite3.Connection:
-        conn = sqlite3.connect(cls._db_path(), check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    @classmethod
-    def init_db(cls) -> None:
-        with _db_lock:
-            with cls._conn() as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS users (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT NOT NULL,
-                        email TEXT UNIQUE NOT NULL,
-                        password_hash TEXT NOT NULL,
-                        role TEXT NOT NULL DEFAULT 'user',
-                        daily_quota INTEGER NOT NULL DEFAULT 5,
-                        created_at TEXT NOT NULL,
-                        is_active INTEGER NOT NULL DEFAULT 1
-                    )
-                    """
-                )
-                # ترقية قواعد قائمة أُنشئت قبل إضافة عمود الإيقاف
-                try:
-                    conn.execute(
-                        "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1"
-                    )
-                except sqlite3.OperationalError:
-                    pass
-                conn.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS resource_owners (
-                        resource_type TEXT NOT NULL,
-                        resource_id TEXT NOT NULL,
-                        user_id INTEGER NOT NULL,
-                        created_at TEXT NOT NULL,
-                        PRIMARY KEY (resource_type, resource_id)
-                    )
-                    """
-                )
-                conn.commit()
-
-    @classmethod
-    def count_users(cls) -> int:
-        cls.init_db()
-        with cls._conn() as conn:
-            row = conn.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()
-            return int(row["cnt"]) if row else 0
-
-    @classmethod
-    def create_user(cls, name: str, email: str, password: str) -> Dict[str, Any]:
-        cls.init_db()
-        clean_name = (name or "").strip()
-        clean_email = (email or "").strip().lower()
-
-        if len(clean_name) < 2:
-            raise ValueError("يرجى إدخال الاسم الكامل (حرفان على الأقل)")
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_email):
-            raise ValueError("يرجى إدخال بريد إلكتروني صحيح")
-        if not password or len(password) < 6:
-            raise ValueError("يجب أن تتكون كلمة المرور من 6 أحرف أو أرقام على الأقل")
-
-        admin_email_env = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
-
-        with _db_lock:
-            with cls._conn() as conn:
-                existing = conn.execute(
-                    "SELECT id FROM users WHERE email = ?", (clean_email,)
-                ).fetchone()
-                if existing:
-                    raise ValueError("هذا البريد الإلكتروني مسجّل بالفعل، يرجى تسجيل الدخول")
-
-                total_Row = conn.execute("SELECT COUNT(*) AS cnt FROM users").fetchone()
-                is_first_user = (int(total_Row["cnt"]) == 0)
-                if admin_email_env:
-                    is_admin = (clean_email == admin_email_env)
-                else:
-                    is_admin = is_first_user
-
-                role = "admin" if is_admin else "user"
-                quota = 999 if is_admin else int(os.environ.get("DEFAULT_USER_DAILY_QUOTA", "5"))
-                now_iso = datetime.now().isoformat()
-                pw_hash = generate_password_hash(password)
-
-                cur = conn.execute(
-                    """
-                    INSERT INTO users (name, email, password_hash, role, daily_quota, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (clean_name, clean_email, pw_hash, role, quota, now_iso),
-                )
-                conn.commit()
-                user_id = cur.lastrowid
-
-        return {
-            "id": user_id,
-            "name": clean_name,
-            "email": clean_email,
-            "role": role,
-            "daily_quota": quota,
-            "created_at": now_iso,
-        }
-
-    @classmethod
-    def authenticate(cls, email: str, password: str) -> Optional[Dict[str, Any]]:
-        cls.init_db()
-        clean_email = (email or "").strip().lower()
-        with cls._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM users WHERE email = ?", (clean_email,)
-            ).fetchone()
-            if not row:
-                return None
-            if not check_password_hash(row["password_hash"], password or ""):
-                return None
-            active = True
-            if "is_active" in row.keys():
-                active = bool(row["is_active"])
-            if not active:
-                raise PermissionError("inactive_account")
-            return {
-                "id": row["id"],
-                "name": row["name"],
-                "email": row["email"],
-                "role": row["role"],
-                "daily_quota": row["daily_quota"],
-                "created_at": row["created_at"],
-                "is_active": active,
-            }
-
-    @classmethod
-    def get_user_by_id(cls, user_id: int) -> Optional[Dict[str, Any]]:
-        cls.init_db()
-        with cls._conn() as conn:
-            row = conn.execute(
-                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users WHERE id = ?",
-                (user_id,),
-            ).fetchone()
-            if not row:
-                return None
-            data = dict(row)
-            data["is_active"] = bool(data.get("is_active", 1))
-            return data
-
-    @classmethod
-    def list_users(cls) -> List[Dict[str, Any]]:
-        cls.init_db()
-        with cls._conn() as conn:
-            rows = conn.execute(
-                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users ORDER BY id DESC"
-            ).fetchall()
-            return [dict(r) for r in rows]
-
-    @classmethod
-    def assign_owner(cls, resource_type: str, resource_id: str, user_id: int) -> None:
-        cls.init_db()
-        now_iso = datetime.now().isoformat()
-        with _db_lock:
-            with cls._conn() as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO resource_owners (resource_type, resource_id, user_id, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (resource_type, resource_id, user_id, now_iso),
-                )
-                conn.commit()
-
-    @classmethod
-    def get_owner_id(cls, resource_type: str, resource_id: str) -> Optional[int]:
-        cls.init_db()
-        with cls._conn() as conn:
-            row = conn.execute(
-                "SELECT user_id FROM resource_owners WHERE resource_type = ? AND resource_id = ?",
-                (resource_type, resource_id),
-            ).fetchone()
-            return int(row["user_id"]) if row else None
-
-    @classmethod
-    def count_today_usage(cls, user_id: int) -> int:
-        cls.init_db()
-        today_prefix = datetime.now().strftime("%Y-%m-%d")
-        with cls._conn() as conn:
-            row = conn.execute(
-                """
-                SELECT COUNT(*) AS cnt FROM resource_owners
-                WHERE resource_type = 'project' AND user_id = ? AND created_at LIKE ?
-                """,
-                (user_id, f"{today_prefix}%"),
-            ).fetchone()
-            return int(row["cnt"]) if row else 0
-
-    @classmethod
-    def can_access(cls, resource_type: str, resource_id: str, user: Optional[Dict[str, Any]]) -> bool:
-        owner_id = cls.get_owner_id(resource_type, resource_id)
-        if owner_id is None:
-            owner_id = _inherited_owner_id(resource_type, resource_id)
-        # Public / sample resources (no owner_id) are accessible to all users
-        if owner_id is None:
-            return True
-        if not user:
-            return False
-        if user.get("role") == "admin":
-            return True
-        return int(user.get("id")) == int(owner_id)
-
-
-class _PgConnection:
-    """مدير سياق يضمن وجود جداول المستخدمين قبل أي استعلام."""
-
-    def __init__(self, ddl):
-        self._ddl = ddl
-        self._cm = None
-        self._conn = None
-
-    def __enter__(self):
-        self._cm = storage._connect()
-        self._conn = self._cm.__enter__()
-        with self._conn.cursor() as cur:
-            for statement in self._ddl:
-                cur.execute(statement)
-        return self._conn
-
-    def __exit__(self, *exc_info):
-        return self._cm.__exit__(*exc_info)
-
-
-LAST_INIT_ERROR = None
-
-
-class _PgUserStore:
-    """نسخة PostgreSQL (Neon) من مخزن المستخدمين والملكية.
-
-    تُستخدم تلقائيًا عند ضبط ``DATABASE_URL``. الواجهة مطابقة تمامًا لنسخة
-    SQLite حتى لا تتغير بقية الشيفرة.
+_SCHEMA_SQL = (
     """
-
-    DDL = (
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            id BIGSERIAL PRIMARY KEY,
-            name TEXT NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'user',
-            daily_quota INTEGER NOT NULL DEFAULT 5,
-            created_at TEXT NOT NULL,
-            is_active BOOLEAN NOT NULL DEFAULT TRUE
-        )
-        """,
-        # ترقية قواعد قائمة أُنشئت قبل إضافة عمود الإيقاف
-        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
-        """
-        CREATE TABLE IF NOT EXISTS resource_owners (
-            resource_type TEXT NOT NULL,
-            resource_id TEXT NOT NULL,
-            user_id BIGINT NOT NULL,
-            created_at TEXT NOT NULL,
-            PRIMARY KEY (resource_type, resource_id)
-        )
-        """,
-        "CREATE INDEX IF NOT EXISTS resource_owners_user_idx ON resource_owners (user_id)",
+    CREATE TABLE IF NOT EXISTS stored_files (
+        path TEXT PRIMARY KEY,
+        content BYTEA NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS stored_files_path_prefix
+        ON stored_files (path text_pattern_ops)
+    """,
+)
 
-    @classmethod
-    def _conn(cls):
-        """سياق اتصال ينشئ الجداول عند الحاجة (يعيد مدير سياق)."""
-        return _PgConnection(cls.DDL)
 
-    @classmethod
-    def init_db(cls) -> None:
-        """ينشئ الجداول، ولا يرفع استثناءً مهما حدث.
+# --------------------------------------------------------------------------
+# الاتصال
+# --------------------------------------------------------------------------
 
-        هذا السطر يُنفَّذ عند إقلاع التطبيق. تعثّر القاعدة لثانية (سبات Neon
-        أو اكتمال عدد الاتصالات) كان يُسقط الخادم كله بخطأ
-        FUNCTION_INVOCATION_FAILED بلا رسالة تُفهم، فتتعطل كل الشاشات ويظن
-        المستخدم أن كلمة مروره خطأ.
-        """
-        global LAST_INIT_ERROR
+def database_url() -> str:
+    from ..config import Config
+
+    return (getattr(Config, "DATABASE_URL", "") or "").strip()
+
+
+def is_durable() -> bool:
+    """هل التخزين الدائم مفعّل؟"""
+    return bool(database_url())
+
+
+def _pool_instance():
+    """مجمّع اتصالات واحد لكل نسخة.
+
+    على serverless كل طلب يفتح اتصالًا جديدًا إلى Neon = زمن TLS إضافي في
+    كل عملية تخزين. المجمّع يجعل الاتصال يُعاد استخدامه داخل النسخة نفسها.
+    """
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            from psycopg_pool import ConnectionPool
+
+            _pool = ConnectionPool(
+                conninfo=database_url(),
+                # min_size=0: لا يُفتح اتصال عند الاستيراد. كان min_size=1 مع
+                # open=True يجعل إنشاء التطبيق يتصل بقاعدة البيانات قبل أول
+                # طلب؛ فإن كانت القاعدة متوقفة أو وصلت لحد الاتصالات سقط
+                # التطبيق كله بـFUNCTION_INVOCATION_FAILED بلا رسالة.
+                min_size=0,
+                max_size=2,
+                timeout=15,
+                # A warm serverless instance may retain sockets that Neon or
+                # an intermediary closed while idle. Validate on checkout,
+                # before handing a connection to authentication or a writer.
+                # The pool discards failed connections and replaces them within
+                # its timeout; never blindly replay a write after an error.
+                check=ConnectionPool.check_connection,
+                kwargs={"autocommit": True},
+                open=True,
+            )
+    return _pool
+
+
+def _connect():
+    """سياق اتصال من المجمّع: ``with _connect() as conn:``"""
+    return _pool_instance().connection()
+
+
+def _close_pool_at_exit() -> None:
+    global _pool
+    if _pool is not None:
         try:
-            with _db_lock, cls._conn() as conn, conn.cursor() as cur:
-                for statement in cls.DDL:
-                    cur.execute(statement)
-            LAST_INIT_ERROR = None
-        except Exception as exc:  # noqa: BLE001
-            LAST_INIT_ERROR = f"{type(exc).__name__}: {exc}"[:300]
-            try:
-                from ..utils.logger import get_logger
-
-                get_logger('mirofish.models.user').error(
-                    f"init_db فشل (الخادم سيعمل ويُبلّغ بالخطأ): {LAST_INIT_ERROR}"
-                )
-            except Exception:  # pragma: no cover
-                pass
-
-    @classmethod
-    def count_users(cls) -> int:
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM users")
-            return int(cur.fetchone()[0])
-
-    @classmethod
-    def create_user(cls, name: str, email: str, password: str) -> Dict[str, Any]:
-        clean_name = (name or "").strip()
-        clean_email = (email or "").strip().lower()
-
-        if len(clean_name) < 2:
-            raise ValueError("يرجى إدخال الاسم الكامل (حرفان على الأقل)")
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_email):
-            raise ValueError("يرجى إدخال بريد إلكتروني صحيح")
-        if not password or len(password) < 6:
-            raise ValueError("يجب أن تتكون كلمة المرور من 6 أحرف أو أرقام على الأقل")
-
-        admin_email_env = (os.environ.get("ADMIN_EMAIL") or "").strip().lower()
-        now_iso = datetime.now().isoformat()
-        pw_hash = generate_password_hash(password)
-
-        with _db_lock:
-            with cls._conn() as conn, conn.cursor() as cur:
-                cur.execute("SELECT id FROM users WHERE email = %s", (clean_email,))
-                if cur.fetchone():
-                    raise ValueError("هذا البريد الإلكتروني مسجّل بالفعل، يرجى تسجيل الدخول")
-
-                cur.execute("SELECT COUNT(*) FROM users")
-                is_first_user = int(cur.fetchone()[0]) == 0
-                is_admin = (clean_email == admin_email_env) if admin_email_env else is_first_user
-                role = "admin" if is_admin else "user"
-                quota = 999 if is_admin else int(os.environ.get("DEFAULT_USER_DAILY_QUOTA", "5"))
-
-                cur.execute(
-                    """
-                    INSERT INTO users (name, email, password_hash, role, daily_quota, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (clean_name, clean_email, pw_hash, role, quota, now_iso),
-                )
-                user_id = int(cur.fetchone()[0])
-
-        return {
-            "id": user_id,
-            "name": clean_name,
-            "email": clean_email,
-            "role": role,
-            "daily_quota": quota,
-            "created_at": now_iso,
-        }
-
-    @classmethod
-    def authenticate(cls, email: str, password: str) -> Optional[Dict[str, Any]]:
-        clean_email = (email or "").strip().lower()
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, email, password_hash, role, daily_quota, created_at, is_active "
-                "FROM users WHERE email = %s",
-                (clean_email,),
-            )
-            row = cur.fetchone()
-        if not row:
-            return None
-        if not check_password_hash(row[3], password or ""):
-            return None
-        active = True if len(row) < 8 or row[7] is None else bool(row[7])
-        if not active:
-            raise PermissionError("inactive_account")
-        return {
-            "id": int(row[0]),
-            "name": row[1],
-            "email": row[2],
-            "role": row[4],
-            "daily_quota": int(row[5]),
-            "created_at": row[6],
-            "is_active": active,
-        }
-
-    @classmethod
-    def get_user_by_id(cls, user_id: int) -> Optional[Dict[str, Any]]:
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users WHERE id = %s",
-                (int(user_id),),
-            )
-            row = cur.fetchone()
-        if not row:
-            return None
-        return {
-            "id": int(row[0]),
-            "name": row[1],
-            "email": row[2],
-            "role": row[3],
-            "daily_quota": int(row[4]),
-            "created_at": row[5],
-            "is_active": bool(row[6]) if len(row) > 6 and row[6] is not None else True,
-        }
-
-    @classmethod
-    def list_users(cls) -> List[Dict[str, Any]]:
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, name, email, role, daily_quota, created_at, is_active FROM users ORDER BY id DESC"
-            )
-            rows = cur.fetchall()
-        return [
-            {
-                "id": int(r[0]),
-                "name": r[1],
-                "email": r[2],
-                "role": r[3],
-                "daily_quota": int(r[4]),
-                "created_at": r[5],
-                "is_active": bool(r[6]) if len(r) > 6 and r[6] is not None else True,
-            }
-            for r in rows
-        ]
-
-    @classmethod
-    def assign_owner(cls, resource_type: str, resource_id: str, user_id: int) -> None:
-        now_iso = datetime.now().isoformat()
-        with _db_lock:
-            with cls._conn() as conn, conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO resource_owners (resource_type, resource_id, user_id, created_at)
-                    VALUES (%s, %s, %s, %s)
-                    ON CONFLICT (resource_type, resource_id)
-                    DO UPDATE SET user_id = EXCLUDED.user_id
-                    """,
-                    (resource_type, resource_id, int(user_id), now_iso),
-                )
-
-    @classmethod
-    def get_owner_id(cls, resource_type: str, resource_id: str) -> Optional[int]:
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT user_id FROM resource_owners WHERE resource_type = %s AND resource_id = %s",
-                (resource_type, resource_id),
-            )
-            row = cur.fetchone()
-        return int(row[0]) if row else None
-
-    @classmethod
-    def count_today_usage(cls, user_id: int) -> int:
-        today_prefix = datetime.now().strftime("%Y-%m-%d")
-        with cls._conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT COUNT(*) FROM resource_owners
-                WHERE resource_type = 'project' AND user_id = %s AND created_at LIKE %s
-                """,
-                (int(user_id), f"{today_prefix}%"),
-            )
-            return int(cur.fetchone()[0])
-
-    @classmethod
-    def can_access(cls, resource_type: str, resource_id: str, user: Optional[Dict[str, Any]]) -> bool:
-        owner_id = cls.get_owner_id(resource_type, resource_id)
-        if owner_id is None:
-            owner_id = _inherited_owner_id(resource_type, resource_id)
-        if owner_id is None:
-            return True
-        if not user:
-            return False
-        if user.get("role") == "admin":
-            return True
-        return int(user.get("id")) == int(owner_id)
-
-
-class _UserStoreProxy:
-    """توجيه تلقائي إلى PostgreSQL عند توفر DATABASE_URL، وإلا SQLite."""
-
-    def __getattr__(self, item):
-        backend = _PgUserStore if storage.is_durable() else _SqliteUserStore
-        return getattr(backend, item)
-
-
-UserStore = _UserStoreProxy()
-
-
-def _serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(Config.SECRET_KEY, salt="istishraf-auth-v1")
-
-
-def issue_auth_token(user: Dict[str, Any]) -> str:
-    return _serializer().dumps({
-        "uid": user["id"],
-        "name": user.get("name", ""),
-        "email": user.get("email", ""),
-        "role": user["role"],
-        "daily_quota": user.get("daily_quota", 5),
-        "created_at": user.get("created_at", ""),
-    })
-
-
-def verify_auth_token(token: str) -> Optional[Dict[str, Any]]:
-    if not token:
-        return None
-    try:
-        payload = _serializer().loads(token, max_age=TOKEN_MAX_AGE_SECONDS)
-        uid = payload.get("uid")
-        if not uid:
-            return None
-        db_user = UserStore.get_user_by_id(int(uid))
-        if db_user:
-            return db_user
-        # Serverless cold-start fallback: trust cryptographically signed token claims
-        if payload.get("email") and payload.get("role"):
-            return {
-                "id": int(uid),
-                "name": payload.get("name") or "مستخدم",
-                "email": payload.get("email"),
-                "role": payload.get("role"),
-                "daily_quota": int(payload.get("daily_quota", 5)),
-                "created_at": payload.get("created_at") or "",
-            }
-        return None
-    except (BadSignature, SignatureExpired, ValueError, TypeError):
-        return None
-
-
-def get_current_user() -> Optional[Dict[str, Any]]:
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        return None
-
-    token = auth_header[7:].strip()
-    payload = verify_auth_token(token)
-    if not payload:
-        return None
-
-    # ``verify_auth_token`` يعيد سجل المستخدم من القاعدة حين يكون موجودًا،
-    # ونعيد القراءة فقط إذا جاء من مسار لا يقرأ القاعدة.
-    if payload.get("is_active") is not None:
-        fresh = payload
-    else:
-        raw_uid = payload.get("uid") or payload.get("id")
-        try:
-            fresh = UserStore.get_user_by_id(int(raw_uid)) if raw_uid else None
+            _pool.close()
         except Exception:
-            fresh = None
-
-    if not fresh:
-        return None
-    # حساب موقوف أو محذوف لا يبقى فعّالًا بتوكن قديم
-    if fresh.get("is_active") is False:
-        return None
-
-    merged = dict(payload)
-    merged["id"] = fresh.get("id") or fresh.get("uid")
-    for key in ("name", "email", "role", "daily_quota"):
-        if fresh.get(key) is not None:
-            merged[key] = fresh[key]
-    return merged
+            pass
+        _pool = None
 
 
-def _inherited_owner_id(resource_type: str, resource_id: str) -> Optional[int]:
-    """مالك موروث للموارد التي لا سجل ملكية لها.
+atexit.register(_close_pool_at_exit)
 
-    التقارير أُنشئت قبل تسجيل الملكية، فتستمد مالكها من محاكاتها حتى لا تبقى
-    ظاهرة لكل المستخدمين. لا تُكتب أي بيانات: مجرد قراءة.
+
+def reset_pool() -> None:
+    """يُستخدم في الاختبارات وبعد تغيير DATABASE_URL."""
+    global _pool, _schema_ready
+    with _pool_lock:
+        if _pool is not None:
+            try:
+                _pool.close()
+            except Exception:
+                pass
+        _pool = None
+        _schema_ready = False
+
+
+def _ensure_schema(conn) -> None:
+    global _schema_ready
+    if _schema_ready:
+        return
+    with _schema_lock:
+        if _schema_ready:
+            return
+        with conn.cursor() as cur:
+            for statement in _SCHEMA_SQL:
+                cur.execute(statement)
+        _schema_ready = True
+
+
+def check_connection() -> bool:
+    """فحص اتصال حقيقي (يستخدمه /health)."""
+    if not is_durable():
+        return False
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                return cur.fetchone()[0] == 1
+    except Exception as exc:  # pragma: no cover - يعتمد على الشبكة
+        logger.warning(f"Postgres health check failed: {exc}")
+        return False
+
+
+# --------------------------------------------------------------------------
+# مفاتيح المسارات
+# --------------------------------------------------------------------------
+
+def _root() -> str:
+    from ..config import Config
+
+    return os.path.abspath(Config.UPLOAD_FOLDER)
+
+
+def _key(path: str) -> str:
+    """مفتاح نسبي ثابت داخل مجلد الرفع."""
+    absolute = _local(path)
+    try:
+        relative = os.path.relpath(absolute, _root())
+    except ValueError:  # pragma: no cover - أحجام أقراص مختلفة
+        relative = os.path.basename(absolute)
+    return relative.replace(os.sep, "/")
+
+
+def _local(path: str) -> str:
+    """مسار محلي مطلق.
+
+    قاعدة موحّدة: المسارات النسبية تُحسب من مجلد الرفع لا من مجلد التشغيل.
+    سبب ذلك: بعض الوحدات تقرأ ``simulations/<id>/...`` و``graphs/<id>.json``
+    بمسارات نسبية. كان ``abspath`` يحلها مقابل مجلد التشغيل (مثل /var/task أو
+    backend/) فتصير مفاتيح التخزين الدائم مختلفة عن مفاتيح الكتابة، فيرى
+    التقرير أنه لا توجد وقائع ولا تفاعلات ويخرج عامًا.
     """
-    if resource_type != "report":
+    if not os.path.isabs(path):
+        path = os.path.join(_root(), path)
+    return os.path.abspath(path)
+
+
+# --------------------------------------------------------------------------
+# عمليات Postgres
+# --------------------------------------------------------------------------
+
+def _pg_put(key: str, content: bytes) -> None:
+    if not is_durable():
+        return
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO stored_files (path, content, updated_at)
+                    VALUES (%s, %s, now())
+                    ON CONFLICT (path) DO UPDATE
+                        SET content = EXCLUDED.content, updated_at = now()
+                    """,
+                    (key, content),
+                )
+    except Exception as exc:
+        logger.error(f"الكتابة في Postgres فشلت للمسار {key}: {exc}")
+
+
+def _pg_get(key: str) -> Optional[bytes]:
+    if not is_durable():
         return None
     try:
-        from ..services.report_agent import ReportManager
-
-        report = ReportManager.get_report(resource_id)
-        simulation_id = getattr(report, "simulation_id", None) if report else None
-        if not simulation_id:
-            return None
-        owner = UserStore.get_owner_id("simulation", str(simulation_id))
-        return int(owner) if owner is not None else None
-    except Exception:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("SELECT content FROM stored_files WHERE path = %s", (key,))
+                row = cur.fetchone()
+                return bytes(row[0]) if row else None
+    except Exception as exc:
+        logger.error(f"القراءة من Postgres فشلت للمسار {key}: {exc}")
         return None
 
 
-# ---------------------------------------------------------------------------
-# عمليات إدارة المستخدمين (للمدير فقط). تعمل مع PostgreSQL أو SQLite حسب البيئة.
-# ---------------------------------------------------------------------------
-
-def _admin_exec(sql_pg: str, sql_lite: str, params: tuple) -> int:
-    """نفّذ أمرًا إداريًا وأعد عدد الصفوف المتأثرة."""
-    if storage.is_durable():
-        with _db_lock, _PgUserStore._conn() as conn, conn.cursor() as cur:
-            cur.execute(sql_pg, params)
-            return int(cur.rowcount or 0)
-    _SqliteUserStore.init_db()
-    with _db_lock:
-        with _SqliteUserStore._conn() as conn:
-            cur = conn.execute(sql_lite, params)
-            conn.commit()
-            return int(cur.rowcount or 0)
+def _pg_exists(key: str) -> bool:
+    if not is_durable():
+        return False
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM stored_files WHERE path = %s OR path LIKE %s LIMIT 1",
+                    (key, f"{key.rstrip('/')}/%"),
+                )
+                return cur.fetchone() is not None
+    except Exception:
+        return False
 
 
-def admin_set_active(user_id: int, active: bool) -> bool:
-    affected = _admin_exec(
-        "UPDATE users SET is_active = %s WHERE id = %s",
-        "UPDATE users SET is_active = ? WHERE id = ?",
-        (bool(active), int(user_id)) if storage.is_durable() else (1 if active else 0, int(user_id)),
-    )
-    return affected > 0
+def _pg_listdir(key: str) -> List[str]:
+    if not is_durable():
+        return []
+    prefix = key.rstrip("/") + "/" if key else ""
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT split_part(substr(path, %s), '/', 1) AS name
+                    FROM stored_files
+                    WHERE path LIKE %s
+                    """,
+                    (len(prefix) + 1, prefix + "%"),
+                )
+                return sorted({row[0] for row in cur.fetchall() if row[0]})
+    except Exception as exc:
+        logger.error(f"قراءة قائمة المجلد من Postgres فشلت للمسار {key}: {exc}")
+        return []
 
 
-def admin_set_quota(user_id: int, daily_quota: int) -> bool:
-    affected = _admin_exec(
-        "UPDATE users SET daily_quota = %s WHERE id = %s",
-        "UPDATE users SET daily_quota = ? WHERE id = ?",
-        (int(daily_quota), int(user_id)),
-    )
-    return affected > 0
+def _pg_delete(key: str, recursive: bool) -> None:
+    if not is_durable():
+        return
+    try:
+        with _connect() as conn:
+            _ensure_schema(conn)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM stored_files WHERE path = %s", (key,))
+                if recursive:
+                    cur.execute(
+                        "DELETE FROM stored_files WHERE path LIKE %s",
+                        (f"{key.rstrip('/')}/%",),
+                    )
+    except Exception as exc:
+        logger.error(f"الحذف من Postgres فشل للمسار {key}: {exc}")
 
 
-def admin_delete_user(user_id: int) -> bool:
-    """حذف الحساب مع إبقاء موارده (تبقى ظاهرة للمدير فقط)."""
-    affected = _admin_exec(
-        "DELETE FROM users WHERE id = %s",
-        "DELETE FROM users WHERE id = ?",
-        (int(user_id),),
-    )
-    return affected > 0
+# --------------------------------------------------------------------------
+# الواجهة العامة
+# --------------------------------------------------------------------------
+
+def ensure_local(path: str) -> str:
+    """اجعل الملف موجودًا على القرص المحلي وأعد مساره المطلق."""
+    absolute = _local(path)
+    if os.path.exists(absolute):
+        return absolute
+
+    content = _pg_get(_key(path))
+    if content is None:
+        raise FileNotFoundError(absolute)
+
+    os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+    with open(absolute, "wb") as handle:
+        handle.write(content)
+    return absolute
 
 
-def admin_count_admins() -> int:
-    if storage.is_durable():
-        with _PgUserStore._conn() as conn, conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-            return int(cur.fetchone()[0])
-    _SqliteUserStore.init_db()
-    with _SqliteUserStore._conn() as conn:
-        row = conn.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'").fetchone()
-        return int(row[0]) if row else 0
+def exists(path: str) -> bool:
+    absolute = _local(path)
+    if os.path.exists(absolute):
+        return True
+    return _pg_exists(_key(path))
+
+
+def write_bytes(path: str, content: bytes) -> None:
+    absolute = _local(path)
+    os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+    with open(absolute, "wb") as handle:
+        handle.write(content)
+    _pg_put(_key(path), content)
+
+
+def read_bytes(path: str) -> bytes:
+    absolute = ensure_local(path)
+    with open(absolute, "rb") as handle:
+        return handle.read()
+
+
+def write_text(path: str, text: str) -> None:
+    write_bytes(path, text.encode("utf-8"))
+
+
+def read_text(path: str) -> Optional[str]:
+    try:
+        return read_bytes(path).decode("utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def write_json(path: str, payload: Any) -> None:
+    write_text(path, json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def read_json(path: str) -> Optional[Any]:
+    raw = read_text(path)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error(f"ملف JSON تالف: {path}")
+        return None
+
+
+def read_bytes_fresh(path: str) -> bytes:
+    """اقرأ النسخة الأحدث من التخزين الدائم، لا النسخة المحلية القديمة.
+
+    سبب وجودها: عدة عمليات تكتب الملف نفسه (تطبيق Vercel + عمّال GitHub
+    Actions). القراءة العادية تُفضّل الملف المحلي إن وُجد، فترى نسخة قديمة
+    كُتبت في هذه النسخة من الخادم بينما ملف آخر أحدث في قاعدة البيانات —
+    ولهذا كان التقرير يبقى «قيد التوليد» في الواجهة بعد أن يكتمل فعلًا.
+    """
+    content = None
+    try:
+        content = _pg_get(_key(path))
+    except Exception as exc:  # pragma: no cover - تعطل قاعدة البيانات
+        logger.warning(f"تعذر القراءة من التخزين الدائم ({path}): {exc}")
+    if content is None:
+        return read_bytes(path)
+    absolute = _local(path)
+    try:
+        os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+        with open(absolute, "wb") as handle:
+            handle.write(content)
+    except OSError:  # pragma: no cover
+        pass
+    return content
+
+
+def read_text_fresh(path: str) -> Optional[str]:
+    try:
+        return read_bytes_fresh(path).decode("utf-8")
+    except FileNotFoundError:
+        return None
+
+
+def read_json_fresh(path: str) -> Optional[Any]:
+    raw = read_text_fresh(path)
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.error(f"ملف JSON تالف: {path}")
+        return None
+
+
+def save_stream(path: str, file_storage) -> int:
+    """احفظ FileStorage (رفع Flask) ثم انسخه إلى Postgres. يعيد الحجم."""
+    absolute = _local(path)
+    os.makedirs(os.path.dirname(absolute) or ".", exist_ok=True)
+    file_storage.save(absolute)
+    size = os.path.getsize(absolute)
+    with open(absolute, "rb") as handle:
+        _pg_put(_key(path), handle.read())
+    return size
+
+
+def push_file(path: str) -> None:
+    """انسخ ملفًا موجودًا على القرص إلى التخزين الدائم (لمكتبات تكتب بنفسها)."""
+    absolute = _local(path)
+    if not os.path.isfile(absolute):
+        return
+    try:
+        with open(absolute, "rb") as handle:
+            _pg_put(_key(path), handle.read())
+    except OSError as exc:
+        logger.error(f"تعذر نسخ الملف إلى التخزين الدائم: {path} ({exc})")
+
+
+def size(path: str) -> int:
+    absolute = _local(path)
+    if os.path.exists(absolute):
+        return os.path.getsize(absolute)
+    content = _pg_get(_key(path))
+    return len(content) if content is not None else 0
+
+
+def listdir(path: str) -> List[str]:
+    """أسماء العناصر داخل مجلد (ملفات ومجلدات) من المصدرين."""
+    absolute = _local(path)
+    names = set()
+    if os.path.isdir(absolute):
+        names.update(os.listdir(absolute))
+    if is_durable():
+        names.update(_pg_listdir(_key(path)))
+    return sorted(names)
+
+
+def list_files(path: str) -> List[str]:
+    """مسارات الملفات داخل مجلد (دون مجلدات فرعية)."""
+    absolute = _local(path)
+    result = []
+    for name in listdir(path):
+        candidate = os.path.join(absolute, name)
+        if os.path.isfile(candidate):
+            result.append(candidate)
+            continue
+        if os.path.isdir(candidate):
+            continue
+        # موجود في Postgres فقط: نُنزّله ليعمل كملف حقيقي
+        try:
+            result.append(ensure_local(candidate))
+        except FileNotFoundError:
+            continue
+    return result
+
+
+def remove(path: str) -> bool:
+    absolute = _local(path)
+    removed = False
+    if os.path.isfile(absolute):
+        os.remove(absolute)
+        removed = True
+    _pg_delete(_key(path), recursive=False)
+    return removed or is_durable()
+
+
+def rmtree(path: str) -> bool:
+    absolute = _local(path)
+    removed = False
+    if os.path.isdir(absolute):
+        shutil.rmtree(absolute)
+        removed = True
+    _pg_delete(_key(path), recursive=True)
+    return removed or is_durable()
+
+
+def makedirs(path: str) -> str:
+    absolute = _local(path)
+    os.makedirs(absolute, exist_ok=True)
+    return absolute
+
+
+def isdir(path: str) -> bool:
+    """هل المسار مجلد؟ يتحقق من القرص ثم من التخزين الدائم (cold start)."""
+    if os.path.isdir(_local(path)):
+        return True
+    if is_durable():
+        try:
+            return bool(_pg_listdir(_key(path)))
+        except Exception:  # pragma: no cover - قاعدة غير متاحة
+            return False
+    return False
+
+
+def storage_info() -> Dict[str, Any]:
+    """"ملخص حالة التخزين — يُستخدم في /health بلا أسرار."""
+    return {
+        "backend": "postgres" if is_durable() else "local",
+        "durable": is_durable(),
+        "root": _root(),
+    }
