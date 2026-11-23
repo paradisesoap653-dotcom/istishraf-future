@@ -2891,6 +2891,13 @@ class ReportManager:
                         logger.info("وُسم %s سطرًا برقم مخالف للمحاكاة", _flagged)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("تعذر فحص تعارض أعداد المحاكاة: %s", exc)
+            # ١.٥) حذف المصادر الوهمية (example.com) قبل أي شيء آخر
+            try:
+                md_content, _fake = strip_placeholder_sources(md_content)
+                if _fake:
+                    logger.warning("حُذف %s مصدرًا وهميًا من التقرير", _fake)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("تعذر فحص المصادر الوهمية: %s", exc)
             # ٢) وسم الأرقام غير المسنودة قبل ترقية المراجع (المراجع تُستثنى تلقائيًا)
             if known:
                 try:
@@ -3211,9 +3218,19 @@ class ReportManager:
                     if simulation_id is None or report.simulation_id == simulation_id:
                         reports.append(report)
         
-        # 按创建时间倒序
-        reports.sort(key=lambda r: r.created_at, reverse=True)
-        
+        # 按创建时间倒序 — مع احتياطي لمن لا يحمل تاريخًا (تقارير قديمة)
+        def _sort_stamp(report):
+            stamp = (getattr(report, "created_at", "") or "").strip()
+            if stamp:
+                return stamp
+            try:
+                meta_path = cls._get_report_path(report.report_id)
+                return str(int(os.path.getmtime(meta_path)))
+            except Exception:  # noqa: BLE001
+                return ""
+
+        reports.sort(key=_sort_stamp, reverse=True)
+
         return reports[:limit]
     
     @classmethod
@@ -3455,3 +3472,45 @@ def flag_count_conflicts(text: str, counts: Dict[str, int], total: int) -> Tuple
         else:
             out.append(line)
     return "\n".join(out), flagged
+
+
+# ─────────────────────────────────────────────────────────────
+# منع المصادر الوهمية (example.com وأمثاله)
+# ─────────────────────────────────────────────────────────────
+_PLACEHOLDER_HOSTS = (
+    "example.com", "example.org", "example.net", "test.com", "tests.com",
+    "localhost", "127.0.0.1", "0.0.0.0", "your-domain.com", "domain.com",
+    "placeholder.com", "sample.com", "fake.com", "website.com",
+)
+_URL_IN_TEXT_RE = re.compile(r"https?://[^\s\)\]\}\u0022\u0027<>]+")
+_CITATION_LEAD_RE = re.compile(
+    r"(?:المصادر?|المصدر|المراجع?|رابط|للتفاصيل|وفق\s*[:\(]?)\s*[:：]?\s*$",
+    re.IGNORECASE)
+
+
+def strip_placeholder_sources(text: str) -> Tuple[str, int]:
+    """يحذف الروابط الوهمية (example.com…) مع كلمة «المصادر» التي تسبقها.
+
+    المصدر الوهمي أخطر من غياب المصدر: يمنح القارئ ثقة زائفة. لذا نحذف
+    الرابط والتمهيد الذي يدعو إليه، ونترك بقية الجملة سليمة.
+    """
+    if not text:
+        return text, 0
+    removed = 0
+    out_lines: List[str] = []
+    for line in text.split("\n"):
+        original = line
+        for match in list(_URL_IN_TEXT_RE.finditer(line)):
+            url = match.group(0)
+            lowered = url.lower()
+            if not any(host in lowered for host in _PLACEHOLDER_HOSTS):
+                continue
+            start = match.start()
+            head = line[:start]
+            lead = _CITATION_LEAD_RE.search(head)
+            if lead:
+                start = lead.start()
+            line = (line[:start] + line[match.end():]).rstrip(" -–—،,.:؛")
+            removed += 1
+        out_lines.append(line if line.strip() else original)
+    return "\n".join(out_lines), removed
