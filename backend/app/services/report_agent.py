@@ -3198,7 +3198,16 @@ class ReportManager:
                 "title": meta.get("title") or "",
             }
             current = index.get(simulation_id)
-            if current is None or (entry["created_at"] or "") > (current["created_at"] or ""):
+            if current is None:
+                index[simulation_id] = entry
+                continue
+            # التقرير المكتمل يغلب غير المكتمل مهما كان تاريخه: إعادة توليد
+            # فاشلة لمحاكاة كانت تُخفي تقريرها الجاهز من القائمة نهائيًا.
+            cur_done = (current.get("status") or "").lower() == "completed"
+            new_done = (entry.get("status") or "").lower() == "completed"
+            if new_done and not cur_done:
+                index[simulation_id] = entry
+            elif new_done == cur_done and (entry["created_at"] or "") > (current["created_at"] or ""):
                 index[simulation_id] = entry
         return index
 
