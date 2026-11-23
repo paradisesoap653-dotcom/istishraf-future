@@ -65,9 +65,9 @@
     <!-- Main Content: Dual Timeline -->
     <div class="main-content-area" ref="scrollContainer">
       <!-- Timeline Header -->
-      <div class="timeline-header" v-if="allActions.length > 0">
+      <div class="timeline-header" v-if="totalActions > 0">
         <div class="timeline-stats">
-          <span class="total-count">TOTAL EVENTS: <span class="mono">{{ allActions.length }}</span></span>
+          <span class="total-count">TOTAL EVENTS: <span class="mono">{{ totalActions }}</span></span>
           <span class="platform-breakdown">
             <template v-for="(item, idx) in platformBreakdown" :key="item.key">
               <span class="breakdown-divider" v-if="idx > 0">/</span>
@@ -345,9 +345,29 @@ const platformCards = computed(() => {
   })
 })
 
+// الأعداد الموثوقة: ما يحسبه الخادم لكل منصّة (نفس أرقام البطاقات).
+// القائمة المحلية قد تنقص لأن المعرّف المركّب يدمج أفعالًا متشابهة في الطابع الزمني،
+// فكان الشريط يعرض 61 بينما البطاقات تجمع 67.
+const authoritativeCounts = computed(() => {
+  const statusPlatforms = (runStatus.value && runStatus.value.platforms) || {}
+  const counts = {}
+  for (const key of platformKeys.value) {
+    const info = statusPlatforms[key] || {}
+    const value = (info.actions_count != null)
+      ? Number(info.actions_count) || 0
+      : (actionCountByPlatform.value[key] || 0)
+    if (value > 0) counts[key] = value
+  }
+  return counts
+})
+
+const totalActions = computed(() =>
+  Object.values(authoritativeCounts.value).reduce((sum, value) => sum + value, 0)
+)
+
 // شريط التوزيع في أعلى الخط الزمني
 const platformBreakdown = computed(() => platformKeys.value
-  .map(key => ({ key, label: platformLabel(key), count: actionCountByPlatform.value[key] || 0 }))
+  .map(key => ({ key, label: platformLabel(key), count: authoritativeCounts.value[key] || 0 }))
   .filter(item => item.count > 0)
 )
 
