@@ -8,14 +8,14 @@
     <div v-if="projects.length > 0" class="report-list-wrap">
       <div class="report-list-head">
         <span class="rl-title">التقارير النهائية</span>
-        <span class="rl-count">{{ finalReports.length }} تقرير جاهز من أصل {{ projects.length }} محاكاة</span>
+        <span class="rl-count">{{ finalReports.length }} تقرير جاهز من أصل {{ totalCount }} محاكاة</span>
         <button
           v-if="duplicateCount > 0"
           class="rl-dedupe"
           :disabled="bulkBusy"
           @click="deleteDuplicates"
         >
-          {{ bulkBusy ? 'جارٍ الحذف…' : `احذف المكرر (${duplicateCount})` }}
+          {{ bulkBusy ? `جارٍ الحذف… ${bulkDone}/${bulkTotal}` : `احذف المكرر (${duplicateCount})` }}
         </button>
       </div>
 
@@ -24,7 +24,7 @@
           التقارير الجاهزة ({{ finalReports.length }})
         </button>
         <button class="rl-tab" :class="{ active: filter === 'all' }" @click="filter = 'all'">
-          كل المحاكاة ({{ projects.length }})
+          كل المحاكاة ({{ totalCount }})
         </button>
       </div>
 
@@ -209,6 +209,9 @@ const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
 const filter = ref('reports')  // reports = التقارير الجاهزة، all = كل المحاكاة
 const deletingId = ref(null)
 const bulkBusy = ref(false)
+const bulkDone = ref(0)
+const bulkTotal = ref(0)
+const totalSims = ref(0)  // العدد الحقيقي من الخادم (قد يتجاوز المقصوص)
 
 // مفتاح التكرار: نفس نص الطلب (بعد تنظيف المسافات) => تقرير مكرر
 const dedupeKey = (project) =>
@@ -235,7 +238,7 @@ const removeOne = async (project) => {
   const failures = []
   if (project.simulation_id) {
     try {
-      await deleteSimulation(project.simulation_id)
+      await deleteSimulation(project.simulation_id, project.report_id)
       return
     } catch (err) {
       failures.push(err?.message || 'فشل حذف المحاكاة')
@@ -279,6 +282,8 @@ const deleteDuplicates = async () => {
   if (!rows.length) return
   if (!window.confirm(`سيُحذف ${rows.length} سجلًا مكررًا، ويُبقى الأحدث من كل نص طلب.\n\nهل تريد المتابعة؟`)) return
   bulkBusy.value = true
+  bulkDone.value = 0
+  bulkTotal.value = rows.length
   let failed = 0
   for (const project of rows) {
     try {
@@ -286,6 +291,7 @@ const deleteDuplicates = async () => {
     } catch (err) {
       failed += 1
     }
+    bulkDone.value += 1
   }
   bulkBusy.value = false
   await loadHistory()
@@ -294,6 +300,9 @@ const deleteDuplicates = async () => {
 
 // المشاريع التي اكتمل تقريرها فعلًا (العدد هنا هو نفسه عدد الصفوف المعروضة)
 const finalReports = computed(() => projects.value.filter(p => p.report_id))
+
+// العدد المعروض: لا يقلّ عن عدد الصفوف المحمّلة، ويكبر إن كان الخادم يملك أكثر
+const totalCount = computed(() => Math.max(totalSims.value, projects.value.length))
 
 // نص الشارة: لا نقول «تقرير جاهز» إلا إذا اكتمل التقرير فعلًا
 const badgeText = (project) => {
@@ -566,9 +575,12 @@ const goToReport = () => {
 const loadHistory = async () => {
   try {
     loading.value = true
-    const response = await getSimulationHistory(20)
+    // 200 لا 20: الحدّ الافتراضي كان يقصّ القائمة عند 20 صفًّا فيبدو العدد
+    // ثابتًا لا ينقص أبدًا بعد الحذف، لأن صفًّا جديدًا يحلّ محلّ المحذوف.
+    const response = await getSimulationHistory(200)
     if (response.success) {
       projects.value = response.data || []
+      totalSims.value = Number(response.total) || projects.value.length
     }
   } catch (error) {
     console.error('加载历史项目失败:', error)
