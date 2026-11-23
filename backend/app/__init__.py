@@ -121,6 +121,21 @@ def create_app(config_class=Config):
             'durable': durable,
             'auth_enforced': True,
         }
+        # عدّاد التقارير المحفوظة (أرقام فقط، بلا محتوى): يكشف فورًا هل الحفظ يعمل
+        try:
+            from .models import storage as _st
+
+            reports_dir = os.path.join(Config.UPLOAD_FOLDER, 'reports')
+            folders = [name for name in _st.listdir(reports_dir) if not name.endswith('.json')]
+            index_exists = _st.exists(os.path.join(reports_dir, '_index.json'))
+            payload['reports'] = {
+                'folders': len(folders),
+                'index': index_exists,
+                'backend': 'postgres' if durable else 'local',
+            }
+        except Exception:  # pragma: no cover
+            payload['reports'] = {'folders': None}
+
         # حالة الطابور (بلا أسرار): عدد المهام وحالة العامل المستقل
         try:
             from .models import job_queue
@@ -260,4 +275,3 @@ def create_app(config_class=Config):
         logger.info("MiroFish Backend 启动完成")
     
     return app
-
