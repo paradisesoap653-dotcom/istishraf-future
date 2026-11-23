@@ -100,3 +100,11 @@ export const getReportScenarios = (reportId) => {
 export const getScenarioDownloadUrl = (reportId, scenarioId, format = 'pdf') => {
   return `/api/report/${reportId}/scenario/${scenarioId}/download?format=${format}`
 }
+
+/**
+ * حذف تقرير واحد نهائيًا.
+ * @param {string} reportId
+ */
+export function deleteReport(reportId) {
+  return service.delete(`/api/report/${reportId}`)
+}
