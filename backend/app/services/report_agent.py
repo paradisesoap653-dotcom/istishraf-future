@@ -3195,7 +3195,8 @@ class ReportManager:
                 "report_id": meta.get("report_id") or report_id,
                 "status": meta.get("status") or "",
                 "created_at": meta.get("created_at") or "",
-                "title": meta.get("title") or "",
+                "title": meta.get("title") or meta.get("simulation_requirement") or "",
+                "requirement": meta.get("simulation_requirement") or "",
             }
             current = index.get(simulation_id)
             if current is None:
