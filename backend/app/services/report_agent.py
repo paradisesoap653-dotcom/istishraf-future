@@ -3266,6 +3266,7 @@ class ReportManager:
         if storage.exists(folder_path):
             storage.rmtree(folder_path)
             logger.info(t('report.reportFolderDeleted', reportId=report_id))
+            forget_report_index(report_id)
             return True
         
         # 兼容旧格式：删除单独的文件
@@ -3279,7 +3280,11 @@ class ReportManager:
         if storage.exists(old_md_path):
             storage.remove(old_md_path)
             deleted = True
-        
+
+        if deleted:
+            # حذف سطر الفهرس أيضًا، وإلا أعاد الفهرسُ التقريرَ المحذوف عند القراءة
+            forget_report_index(report_id)
+
         return deleted
 
 # ─────────────────────────────────────────────────────────────
@@ -3570,6 +3575,20 @@ def record_report_index(report) -> None:
         storage.write_json(path, {"reports": entries})
     except Exception as exc:  # noqa: BLE001
         logger.warning("تعذر تحديث فهرس التقارير: %s", exc)
+
+
+def forget_report_index(report_id: str) -> None:
+    """يحذف سطر التقرير من _index.json حتى لا يُعيده الفهرس بعد حذف مجلده."""
+    try:
+        path = _reports_index_path()
+        data = storage.read_json(path) or {}
+        entries = data.get("reports") if isinstance(data, dict) else None
+        if not isinstance(entries, dict) or str(report_id) not in entries:
+            return
+        entries.pop(str(report_id), None)
+        storage.write_json(path, {"reports": entries})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر تحديث فهرس التقارير بعد الحذف: %s", exc)
 
 
 def _indexed_report_ids() -> List[str]:
