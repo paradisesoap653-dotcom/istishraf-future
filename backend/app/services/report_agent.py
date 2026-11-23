@@ -3294,6 +3294,9 @@ def _token_backed(token: str, following: str, known_numbers: set) -> bool:
     if not digits:
         return True
     is_percent = token.strip().endswith(("%", "٪"))
+    tail_raw = str(following or "").translate(_DIGIT_MAP).strip()
+    if tail_raw.startswith(("×", "x", "X", "أضعاف", "ضعف")):
+        is_percent = True  # «5×» أو «ضعف» ادّعاء كمي حتى لو كان رقمه صغيرًا
     year_like = len(digits) == 4 and digits[:2] in {"19", "20"}
     tail = str(following or "").translate(_DIGIT_MAP).lower().strip()
     has_multiplier = any(tail.startswith(word) for word, _ in _MULTIPLIERS)
@@ -3354,6 +3357,9 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any],
 # ─────────────────────────────────────────────────────────────
 COUNT_CONFLICT_TAG = "〔رقم يخالف بيانات المحاكاة〕"
 _COUNT_WORDS = ("تفاعل", "منشور", "رسال", "رد", "مشارك", "أفعال", "تعليق")
+_NON_COUNT_UNITS = ("شهر", "أشهر", "سنة", "سنوات", "سنين", "يوم", "أيام", "أسبوع",
+                    "ساعة", "ساعات", "دقيقة", "دقائق", "ثانية", "ثوان",
+                    "%", "٪", "مليون", "مليار", "ألف", "دولار", "ريال", "درهم")
 _PLATFORM_ALIASES = {
     "فيسبوك": ("فيسبوك", "facebook", "فيسبوك"),
     "واتساب": ("واتساب", "whatsapp"),
@@ -3423,7 +3429,17 @@ def flag_count_conflicts(text: str, counts: Dict[str, int], total: int) -> Tuple
                 or not any(word in lowered for word in _COUNT_WORDS)):
             out.append(line)
             continue
-        numbers = {_digits_of(m.group(0)) for m in _NUM_TOKEN_RE.finditer(lowered)}
+        numbers = set()
+        for match in _NUM_TOKEN_RE.finditer(lowered):
+            tail = lowered[match.end():match.end() + 12].strip()
+            if any(tail.startswith(unit) for unit in _NON_COUNT_UNITS):
+                continue  # «9 أشهر» أو «12 مليون» ليست عدد أفعال
+            digits = _digits_of(match.group(0))
+            if digits:
+                numbers.add(digits)
+        if not numbers:
+            out.append(line)
+            continue
         wrong = False
         for label, real in counts.items():
             if not _alias_in_line(label, lowered):
