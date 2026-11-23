@@ -86,10 +86,18 @@ def create_app(config_class=Config):
     from .api.auth import auth_bp
     from .models.user import UserStore, get_current_user
     from .utils.demo_seed import seed_arabic_demo_if_missing
-    UserStore.init_db()
+    boot_errors = []
+    try:
+        UserStore.init_db()
+    except Exception as db_boot_err:  # noqa: BLE001
+        # لا نُسقط التطبيق كله: بدونه لا يعمل /health ولا تظهر أي رسالة،
+        # بل يرى المستخدم «FUNCTION_INVOCATION_FAILED» فقط.
+        boot_errors.append({'step': 'init_db', 'error': str(db_boot_err)[:300]})
+        logger.error(f"UserStore.init_db فشل: {db_boot_err}")
     try:
         seed_arabic_demo_if_missing()
     except Exception as seed_err:
+        boot_errors.append({'step': 'demo_seed', 'error': str(seed_err)[:300]})
         logger.warning(f"Demo seed skipped: {seed_err}")
 
     from .models import storage
@@ -163,6 +171,19 @@ def create_app(config_class=Config):
                 payload['reports']['read_error'] = str(read_exc)[:120]
         except Exception:  # pragma: no cover
             payload['reports'] = {'folders': None}
+
+        # أخطاء الإقلاع: أوضح من «func invocation failed»
+        prev = globals().get('_BOOT_ERRORS')
+        if boot_errors or prev:
+            merged = list(prev or [])
+            for item in boot_errors or []:
+                if item not in merged:
+                    merged.append(item)
+            try:
+                globals()['_BOOT_ERRORS'] = merged
+            except Exception:  # pragma: no cover
+                pass
+            payload['boot_errors'] = merged[-5:]
 
         # حالة الطابور (بلا أسرار): عدد المهام وحالة العامل المستقل
         try:
