@@ -190,7 +190,7 @@
 import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { getSimulationHistory } from '../api/simulation'
+import { getSimulationHistory, deleteSimulation } from '../api/simulation'
 import { deleteProject } from '../api/graph'
 import { deleteReport } from '../api/report'
 import ReportDownloadButton from './ReportDownloadButton.vue'
@@ -228,10 +228,36 @@ const duplicateRows = computed(() => {
 })
 const duplicateCount = computed(() => duplicateRows.value.length)
 
+// الحذف يبدأ من المحاكاة نفسها: الخادم يحذف تقريرها ومجلدها ومشروعها معًا.
+// السبب: بعض المحاكاة القديمة فقدت مجلد مشروعها، فكان الحذف من مسار المشروع
+// يفشل بـ«لم يتم العثور على المشروع» ويبقى السجل في القائمة.
 const removeOne = async (project) => {
-  if (project.project_id) return deleteProject(project.project_id)
-  if (project.report_id) return deleteReport(project.report_id)
-  throw new Error('لا يمكن حذف سجل بلا معرّف مشروع أو تقرير')
+  const failures = []
+  if (project.simulation_id) {
+    try {
+      await deleteSimulation(project.simulation_id)
+      return
+    } catch (err) {
+      failures.push(err?.message || 'فشل حذف المحاكاة')
+    }
+  }
+  if (project.project_id) {
+    try {
+      await deleteProject(project.project_id)
+      return
+    } catch (err) {
+      failures.push(err?.message || 'فشل حذف المشروع')
+    }
+  }
+  if (project.report_id) {
+    try {
+      await deleteReport(project.report_id)
+      return
+    } catch (err) {
+      failures.push(err?.message || 'فشل حذف التقرير')
+    }
+  }
+  throw new Error(failures.join(' · ') || 'لا يمكن حذف سجل بلا معرّف')
 }
 
 const confirmDelete = async (project) => {
