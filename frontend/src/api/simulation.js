@@ -208,6 +208,7 @@ export const fetchSearchInterest = (simulationId, keyword, geo = 'SD') =>
  * حذف محاكاة نهائيًا (تقريرها + مجلدها + المشروع المرتبط).
  * @param {string} simulationId
  */
-export function deleteSimulation(simulationId) {
-  return service.delete(`/api/simulation/${simulationId}`)
+export function deleteSimulation(simulationId, reportId) {
+  const params = reportId ? { report_id: reportId } : undefined
+  return service.delete(`/api/simulation/${simulationId}`, { params })
 }
