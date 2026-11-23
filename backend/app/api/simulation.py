@@ -857,6 +857,70 @@ def get_simulation(simulation_id: str):
         }), 500
 
 
+@simulation_bp.route('/<simulation_id>', methods=['DELETE'])
+def delete_simulation(simulation_id: str):
+    """حذف محاكاة نهائيًا: تقريرها + مجلدها + المشروع المرتبط إن وُجد.
+
+    لا يعتمد على وجود المشروع، لأن بعض المحاكاة القديمة فقدت مجلد مشروعها
+    فكان الحذف من مسار المشروع يفشل بـ404 ويبقى السجل في القائمة.
+    """
+    try:
+        from ..models.user import UserStore, get_current_user
+        from ..services.report_agent import ReportManager
+
+        manager = SimulationManager()
+        state = manager.get_simulation(simulation_id)
+
+        current_user = get_current_user()
+        if state and not UserStore.can_access('simulation', simulation_id, current_user):
+            return jsonify({
+                "success": False,
+                "error": t('api.simulationNotFound', id=simulation_id)
+            }), 404
+
+        removed_reports = 0
+        try:
+            report = ReportManager.get_report_by_simulation(simulation_id)
+            if report and ReportManager.delete_report(report.report_id):
+                removed_reports += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"delete report of {simulation_id} failed: {exc}")
+
+        removed_sim = False
+        try:
+            removed_sim = manager.delete_simulation(simulation_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"delete simulation {simulation_id} failed: {exc}")
+
+        project_id = getattr(state, 'project_id', None) if state else None
+        if project_id:
+            try:
+                ProjectManager.delete_project(project_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"delete project {project_id} failed: {exc}")
+
+        if not removed_sim and not removed_reports:
+            return jsonify({
+                "success": False,
+                "error": t('api.simulationNotFound', id=simulation_id)
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "message": f"تم حذف المحاكاة {simulation_id}",
+            "removed_simulation": removed_sim,
+            "removed_reports": removed_reports
+        })
+
+    except Exception as e:
+        logger.error(f"删除模拟失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
 @simulation_bp.route('/list', methods=['GET'])
 def list_simulations():
     """
