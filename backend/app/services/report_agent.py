@@ -2929,6 +2929,38 @@ class ReportManager:
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر ترقية مراجع الأرقام: %s", exc)
 
+        # ── تنقية نهائية: تكرار، تاريخ مُختلق، وسوم فحص ظاهرة ──
+        try:
+            _real_date = ""
+            try:
+                _rep = cls.get_report(report_id)
+                _stamp = getattr(_rep, "created_at", "") or ""
+                if _stamp[:10].count("-") == 2:
+                    _y, _m, _d = _stamp[:10].split("-")
+                    _real_date = f"{_y}/{_m}/{_d}"
+            except Exception:  # noqa: BLE001
+                pass
+
+            md_content, _dup = dedupe_report_paragraphs(md_content)
+            if _dup:
+                logger.info("حُذفت %s فقرة مكررة من التقرير", _dup)
+
+            md_content, _fixed = fix_simulation_date(md_content, _real_date)
+            if _fixed:
+                logger.info("صُحّح تاريخ المحاكاة في %s موضعًا", _fixed)
+
+            md_content, _qa = collect_qa_tags(md_content)
+            md_content = append_qa_appendix(md_content, _qa)
+
+            if _real_date and "تاريخ التقرير" not in md_content:
+                md_content = md_content.replace(
+                    "---\n\n",
+                    f"---\n\n*تاريخ التقرير: {_real_date}*\n\n",
+                    1,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر تنقية التقرير النهائي: %s", exc)
+
         # 保存完整报告
         full_path = cls._get_report_markdown_path(report_id)
         storage.write_text(full_path, md_content)
@@ -3300,6 +3332,115 @@ class ReportManager:
 # ─────────────────────────────────────────────────────────────
 # وسم الأرقام غير الموثّقة (الطبقة الثانية — الطريق «ب»: وسم لا حذف)
 # ─────────────────────────────────────────────────────────────
+# ── تنقية نهائية للتقرير: تكرار، تواريخ مُختلقة، وسوم فحص ظاهرة ──
+
+_QA_TAG_RE = re.compile(r"〔(?!مدخل|افتراض|استنتاج)[^〕]{1,40}〕")
+_DATE_TOKEN_RE = re.compile(r"\d{1,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}")
+_SIM_SENTENCE_KW = ("أُجريت", "أجريت", "جرت", "تمت", "تم إجراء", "أُعدّت", "أعدت")
+
+
+def _norm_para(text: str) -> str:
+    """يبسّط الفقرة للمقارنة: بلا رموز، بلا مسافات زائدة."""
+    t = re.sub(r"[*_`#>•\-\[\]()]", " ", text)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t[:110]
+
+
+def dedupe_report_paragraphs(md: str, min_len: int = 70) -> tuple:
+    """يحذف الفقرات المكررة (أو شبه المكررة) التي يعيد النموذج كتابتها.
+
+    أرجع (النص المنقّى، عدد الفقرات المحذوفة).
+    """
+    blocks = re.split(r"(\n\s*\n)", md)
+    seen, kept, removed = set(), [], 0
+    for block in blocks:
+        plain = re.sub(r"\s+", " ", block).strip()
+        if not plain:
+            kept.append(block)
+            continue
+        if block.lstrip().startswith("#") or len(plain) < min_len:
+            kept.append(block)
+            continue
+        key = _norm_para(block)
+        if key in seen:
+            removed += 1
+            continue
+        seen.add(key)
+        kept.append(block)
+    out = "".join(kept)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out, removed
+
+
+def fix_simulation_date(md: str, real_date: str) -> tuple:
+    """يستبدل أي تاريخ مُختلق في سطر يتحدث عن إجراء المحاكاة بتاريخ التقرير الحقيقي.
+
+    لا يمسّ التواريخ الأخرى (مثل تاريخ منشور مقتبس)، لأنها ليست من اختصاص هذا الفحص.
+    """
+    if not real_date:
+        return md, 0
+    count = 0
+    lines = md.split("\n")
+    for i, line in enumerate(lines):
+        if "محاكاة" not in line and "التجربة" not in line:
+            continue
+        hits = [line.find(kw) for kw in _SIM_SENTENCE_KW if kw in line]
+        if not hits:
+            continue
+        kw_pos = min(hits)
+        # التاريخ المعني هو التالي لفعل الإجراء فقط؛ تواريخ المنشورات المقتبسة
+        # التي ترد لاحقًا في السطر نفسه لا تُمسّ.
+        match = _DATE_TOKEN_RE.search(line, kw_pos)
+        if not match or match.start() - kw_pos > 60:
+            continue
+        lines[i] = line[: match.start()] + real_date + line[match.end():]
+        count += 1
+    return "\n".join(lines), count
+
+
+def collect_qa_tags(md: str) -> tuple:
+    """ينزع وسوم الفحص (〔بلا مصدر〕، 〔رقم يخالف…〕) من المتن ويجمع سطورها في ملحق.
+
+    أرجع (النص، قائمة السطور التي تحتاج تحققًا).
+    """
+    notes, out_lines = [], []
+    for line in md.split("\n"):
+        tags = _QA_TAG_RE.findall(line)
+        if not tags:
+            out_lines.append(line)
+            continue
+        cleaned = _QA_TAG_RE.sub("", line)
+        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+        cleaned = re.sub(r"\s+([.،؛])", r"\1", cleaned).strip(" -*")
+        if cleaned:
+            notes.append(cleaned[:200])
+        out_lines.append(_QA_TAG_RE.sub("", line).rstrip())
+    out = "\n".join(out_lines)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out, notes
+
+
+def append_qa_appendix(md: str, notes: list) -> str:
+    if not notes:
+        return md
+    uniq, seen = [], set()
+    for note in notes:
+        key = _norm_para(note)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        uniq.append(note)
+    if not uniq:
+        return md
+    body = "\n".join(f"- {n}" for n in uniq[:12])
+    return (
+        md.rstrip()
+        + "\n\n## بنود تحتاج تحقّقًا قبل النشر\n\n"
+        + "هذه الجمل وردت بلا سند رقمي في بيانات المحاكاة أو تخالفها، فتُقرأ كفرض لا كحقيقة:\n\n"
+        + body
+        + "\n"
+    )
+
 UNSOURCED_TAG = "〔بلا مصدر〕"
 _DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
 _NUM_TOKEN_RE = re.compile(r"\d[\d.,٬]*\s*[%٪]?")
