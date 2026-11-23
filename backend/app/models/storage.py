@@ -81,9 +81,13 @@ def _pool_instance():
 
             _pool = ConnectionPool(
                 conninfo=database_url(),
-                min_size=1,
-                max_size=4,
-                timeout=10,
+                # min_size=0: لا يُفتح اتصال عند الاستيراد. كان min_size=1 مع
+                # open=True يجعل إنشاء التطبيق يتصل بقاعدة البيانات قبل أول
+                # طلب؛ فإن كانت القاعدة متوقفة أو وصلت لحد الاتصالات سقط
+                # التطبيق كله بـFUNCTION_INVOCATION_FAILED بلا رسالة.
+                min_size=0,
+                max_size=2,
+                timeout=15,
                 # A warm serverless instance may retain sockets that Neon or
                 # an intermediary closed while idle. Validate on checkout,
                 # before handing a connection to authentication or a writer.
