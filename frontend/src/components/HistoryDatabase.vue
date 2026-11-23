@@ -9,6 +9,14 @@
       <div class="report-list-head">
         <span class="rl-title">التقارير النهائية</span>
         <span class="rl-count">{{ finalReports.length }} تقرير جاهز من أصل {{ projects.length }} محاكاة</span>
+        <button
+          v-if="duplicateCount > 0"
+          class="rl-dedupe"
+          :disabled="bulkBusy"
+          @click="deleteDuplicates"
+        >
+          {{ bulkBusy ? 'جارٍ الحذف…' : `احذف المكرر (${duplicateCount})` }}
+        </button>
       </div>
 
       <div class="rl-tabs">
@@ -61,6 +69,14 @@
             />
 
             <button class="rr-det" @click="openDetails(project)">التفاصيل</button>
+            <button
+              class="rr-del"
+              :disabled="deletingId === project.simulation_id"
+              :title="'حذف هذه المحاكاة وتقريرها نهائيًا'"
+              @click="confirmDelete(project)"
+            >
+              {{ deletingId === project.simulation_id ? '…' : '🗑' }}
+            </button>
           </div>
         </div>
 
@@ -175,6 +191,8 @@ import { ref, computed, onMounted, onUnmounted, onActivated, watch, nextTick } f
 import { useRouter, useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { getSimulationHistory } from '../api/simulation'
+import { deleteProject } from '../api/graph'
+import { deleteReport } from '../api/report'
 import ReportDownloadButton from './ReportDownloadButton.vue'
 
 const router = useRouter()
@@ -189,6 +207,64 @@ const hoveringCard = ref(null)
 const historyContainer = ref(null)
 const selectedProject = ref(null)  // 当前选中的项目（用于弹窗）
 const filter = ref('reports')  // reports = التقارير الجاهزة، all = كل المحاكاة
+const deletingId = ref(null)
+const bulkBusy = ref(false)
+
+// مفتاح التكرار: نفس نص الطلب (بعد تنظيف المسافات) => تقرير مكرر
+const dedupeKey = (project) =>
+  (project?.simulation_requirement || '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+// الصفوف الزائدة: كل ما هو ليس الأحدث لكل نص طلب
+const duplicateRows = computed(() => {
+  const seen = new Set()
+  const extras = []
+  for (const project of projects.value) {
+    const key = dedupeKey(project)
+    if (!key) continue
+    if (seen.has(key)) extras.push(project)
+    else seen.add(key)
+  }
+  return extras
+})
+const duplicateCount = computed(() => duplicateRows.value.length)
+
+const removeOne = async (project) => {
+  if (project.project_id) return deleteProject(project.project_id)
+  if (project.report_id) return deleteReport(project.report_id)
+  throw new Error('لا يمكن حذف سجل بلا معرّف مشروع أو تقرير')
+}
+
+const confirmDelete = async (project) => {
+  const label = reportTitle(project)
+  if (!window.confirm(`حذف المحاكاة وتقريرها نهائيًا؟\n\n«${label}»`)) return
+  deletingId.value = project.simulation_id
+  try {
+    await removeOne(project)
+    await loadHistory()
+  } catch (err) {
+    window.alert(err?.message || 'تعذر الحذف. تحقق من الاتصال وحاول مرة أخرى.')
+  } finally {
+    deletingId.value = null
+  }
+}
+
+const deleteDuplicates = async () => {
+  const rows = duplicateRows.value.slice()
+  if (!rows.length) return
+  if (!window.confirm(`سيُحذف ${rows.length} سجلًا مكررًا، ويُبقى الأحدث من كل نص طلب.\n\nهل تريد المتابعة؟`)) return
+  bulkBusy.value = true
+  let failed = 0
+  for (const project of rows) {
+    try {
+      await removeOne(project)
+    } catch (err) {
+      failed += 1
+    }
+  }
+  bulkBusy.value = false
+  await loadHistory()
+  if (failed) window.alert(`تعذر حذف ${failed} سجلًا. الباقي حُذف.`)
+}
 
 // المشاريع التي اكتمل تقريرها فعلًا (العدد هنا هو نفسه عدد الصفوف المعروضة)
 const finalReports = computed(() => projects.value.filter(p => p.report_id))
@@ -1371,6 +1447,33 @@ onUnmounted(() => {
 .card-download-row { margin-top: 10px; display: flex; justify-content: flex-end; }
 
 /* ===== قائمة التقارير النهائية ===== */
+.rl-dedupe {
+  margin-inline-start: auto;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #B42318;
+  background: rgba(180, 35, 24, 0.08);
+  border: 1px solid rgba(180, 35, 24, 0.35);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.rl-dedupe:disabled { opacity: .6; cursor: default; }
+
+.rr-del {
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #B42318;
+  background: transparent;
+  border: 1px solid rgba(180, 35, 24, 0.3);
+  border-radius: 10px;
+  cursor: pointer;
+}
+.rr-del:disabled { opacity: .5; cursor: default; }
+
 .report-list-wrap {
   max-width: 1000px;
   margin: 0 auto;
