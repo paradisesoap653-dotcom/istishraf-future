@@ -257,6 +257,9 @@ class _PgConnection:
         return self._cm.__exit__(*exc_info)
 
 
+LAST_INIT_ERROR = None
+
+
 class _PgUserStore:
     """نسخة PostgreSQL (Neon) من مخزن المستخدمين والملكية.
 
@@ -298,9 +301,29 @@ class _PgUserStore:
 
     @classmethod
     def init_db(cls) -> None:
-        with _db_lock, cls._conn() as conn, conn.cursor() as cur:
-            for statement in cls.DDL:
-                cur.execute(statement)
+        """ينشئ الجداول، ولا يرفع استثناءً مهما حدث.
+
+        هذا السطر يُنفَّذ عند إقلاع التطبيق. تعثّر القاعدة لثانية (سبات Neon
+        أو اكتمال عدد الاتصالات) كان يُسقط الخادم كله بخطأ
+        FUNCTION_INVOCATION_FAILED بلا رسالة تُفهم، فتتعطل كل الشاشات ويظن
+        المستخدم أن كلمة مروره خطأ.
+        """
+        global LAST_INIT_ERROR
+        try:
+            with _db_lock, cls._conn() as conn, conn.cursor() as cur:
+                for statement in cls.DDL:
+                    cur.execute(statement)
+            LAST_INIT_ERROR = None
+        except Exception as exc:  # noqa: BLE001
+            LAST_INIT_ERROR = f"{type(exc).__name__}: {exc}"[:300]
+            try:
+                from ..utils.logger import get_logger
+
+                get_logger('mirofish.models.user').error(
+                    f"init_db فشل (الخادم سيعمل ويُبلّغ بالخطأ): {LAST_INIT_ERROR}"
+                )
+            except Exception:  # pragma: no cover
+                pass
 
     @classmethod
     def count_users(cls) -> int:
