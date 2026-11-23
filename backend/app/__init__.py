@@ -162,7 +162,8 @@ def create_app(config_class=Config):
                         'id': r.report_id,
                         'sim': (r.simulation_id or '')[-6:],
                         'status': str(getattr(r.status, 'value', r.status) or ''),
-                        'title': (getattr(r, 'title', '') or '')[:60],
+                        # Report لا يحمل حقل title؛ الوصف المقروء هو نص الطلب
+                        'title': (getattr(r, 'simulation_requirement', '') or '')[:60],
                     }
                     for r in listed[:12]
                 ]
