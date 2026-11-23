@@ -3080,6 +3080,8 @@ class ReportManager:
         if report.markdown_content:
             storage.write_text(cls._get_report_markdown_path(report.report_id), report.markdown_content)
         
+        record_report_index(report)
+
         logger.info(t('report.reportSaved', reportId=report.report_id))
     
     @classmethod
@@ -3202,6 +3204,7 @@ class ReportManager:
         cls._ensure_reports_dir()
         
         reports = []
+        seen_ids = set()
         for item in storage.listdir(cls.REPORTS_DIR):
             item_path = os.path.join(cls.REPORTS_DIR, item)
             # 新格式：文件夹
@@ -3210,6 +3213,7 @@ class ReportManager:
                 if report:
                     if simulation_id is None or report.simulation_id == simulation_id:
                         reports.append(report)
+                        seen_ids.add(report.report_id)
             # 兼容旧格式：JSON文件
             elif item.endswith('.json'):
                 report_id = item[:-5]
@@ -3218,6 +3222,18 @@ class ReportManager:
                     if simulation_id is None or report.simulation_id == simulation_id:
                         reports.append(report)
         
+        # ما سجّله الفهرس ولم يظهر في المسح (عملية أخرى كتبته)
+        for indexed_id in _indexed_report_ids():
+            if indexed_id in seen_ids:
+                continue
+            report = cls.get_report(indexed_id)
+            if not report:
+                continue
+            if simulation_id is not None and report.simulation_id != simulation_id:
+                continue
+            reports.append(report)
+            seen_ids.add(indexed_id)
+
         # 按创建时间倒序 — مع احتياطي لمن لا يحمل تاريخًا (تقارير قديمة)
         def _sort_stamp(report):
             stamp = (getattr(report, "created_at", "") or "").strip()
@@ -3514,3 +3530,46 @@ def strip_placeholder_sources(text: str) -> Tuple[str, int]:
             removed += 1
         out_lines.append(line if line.strip() else original)
     return "\n".join(out_lines), removed
+
+
+# ─────────────────────────────────────────────────────────────
+# فهرس التقارير المحفوظة (سجل دائم مستقل عن مسح المجلدات)
+# ─────────────────────────────────────────────────────────────
+def _reports_index_path() -> str:
+    return os.path.join(ReportManager.REPORTS_DIR, "_index.json")
+
+
+def record_report_index(report) -> None:
+    """يضيف/يحدّث سطر التقرير في سجل واحد يُقرأ دائمًا.
+
+    السبب: مسح المجلدات قد لا يرى ما كتبته عملية أخرى (عامل الطابور)، فيبدو
+    التقرير الجديد غير محفوظ. السجل ملف واحد معروف، وقراءته لا تعتمد على مسح.
+    """
+    try:
+        path = _reports_index_path()
+        data = storage.read_json(path) or {}
+        entries = data.get("reports") if isinstance(data, dict) else None
+        if not isinstance(entries, dict):
+            entries = {}
+        entries[str(report.report_id)] = {
+            "report_id": getattr(report, "report_id", ""),
+            "simulation_id": getattr(report, "simulation_id", "") or "",
+            "title": getattr(report, "title", "") or "",
+            "status": str(getattr(report, "status", "") or getattr(getattr(report, "status", None), "value", "") or ""),
+            "created_at": getattr(report, "created_at", "") or "",
+            "updated_at": datetime.now().isoformat(),
+        }
+        storage.write_json(path, {"reports": entries})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر تحديث فهرس التقارير: %s", exc)
+
+
+def _indexed_report_ids() -> List[str]:
+    try:
+        data = storage.read_json_fresh(_reports_index_path()) or {}
+        entries = data.get("reports") if isinstance(data, dict) else {}
+        if isinstance(entries, dict):
+            return list(entries.keys())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر قراءة فهرس التقارير: %s", exc)
+    return []
