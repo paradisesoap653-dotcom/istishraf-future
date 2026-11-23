@@ -203,3 +203,11 @@ export const lookupFacebookProfile = (simulationId, url) =>
 // قياس اهتمام البحث عن كلمة في بلد (Google Trends) وحفظه كمعطى
 export const fetchSearchInterest = (simulationId, keyword, geo = 'SD') =>
   service.post(`/api/simulation/${simulationId}/platform-inputs/trends`, { keyword, geo })
+
+/**
+ * حذف محاكاة نهائيًا (تقريرها + مجلدها + المشروع المرتبط).
+ * @param {string} simulationId
+ */
+export function deleteSimulation(simulationId) {
+  return service.delete(`/api/simulation/${simulationId}`)
+}
