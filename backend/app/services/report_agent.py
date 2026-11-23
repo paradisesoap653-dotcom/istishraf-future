@@ -3125,6 +3125,10 @@ class ReportManager:
             full_report_path = cls._get_report_markdown_path(report_id)
             markdown_content = storage.read_text(full_report_path) or ""
         
+        if not isinstance(data, dict) or not data.get('report_id'):
+            # ملف JSON لا يخصّ تقريرًا (فهرس/ملف مؤقت): لا نُسقط القائمة كلها
+            return None
+
         return Report(
             report_id=data['report_id'],
             simulation_id=data['simulation_id'],
@@ -3206,6 +3210,10 @@ class ReportManager:
         reports = []
         seen_ids = set()
         for item in storage.listdir(cls.REPORTS_DIR):
+            # ملفات النظام (مثل _index.json) ليست تقارير: كانت تُقرأ كتقرير
+            # فيرمي get_report استثناء KeyError ويُسقط القائمة كلها.
+            if item.startswith('_') or item.startswith('.'):
+                continue
             item_path = os.path.join(cls.REPORTS_DIR, item)
             # 新格式：文件夹
             if storage.isdir(item_path) or (storage.exists(item_path) and not item.endswith('.json')):
