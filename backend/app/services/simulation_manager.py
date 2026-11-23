@@ -557,6 +557,17 @@ class SimulationManager:
         
         return simulations
     
+    def delete_simulation(self, simulation_id: str) -> bool:
+        """حذف محاكاة كاملة: مجلدها وكل ملفاتها (state/config/actions/profiles)."""
+        try:
+            sim_dir = self._get_simulation_dir(simulation_id)
+        except Exception:  # noqa: BLE001
+            sim_dir = os.path.join(self.SIMULATION_DATA_DIR, simulation_id)
+        if not storage.exists(sim_dir):
+            return False
+        storage.rmtree(sim_dir)
+        return True
+
     def get_profiles(self, simulation_id: str, platform: str = None) -> List[Dict[str, Any]]:
         """获取模拟的Agent Profile"""
         state = self._load_simulation_state(simulation_id)
