@@ -1110,12 +1110,44 @@ def get_simulation_history():
             
             enriched_simulations.append(sim_dict)
         
+        # تقارير مكتملة لمحاكايتها سجلّ مفقود (حُذف مجلدها أو لم يُحفظ):
+        # كانت تختفي من القائمة تمامًا مع أن التقرير موجود وقابل للفتح.
+        try:
+            known = {sim.simulation_id for sim in simulations}
+            for sim_id, entry in _reports_index().items():
+                if sim_id in known:
+                    continue
+                if (entry.get('status') or '').lower() != 'completed':
+                    continue
+                stamp = entry.get('created_at') or ''
+                enriched_simulations.append({
+                    'simulation_id': sim_id,
+                    'project_id': None,
+                    'project_name': '',
+                    'simulation_requirement': entry.get('requirement') or entry.get('title') or '',
+                    'status': 'completed',
+                    'created_at': stamp,
+                    'updated_at': stamp,
+                    'current_round': 0,
+                    'total_rounds': 0,
+                    'report_id': entry.get('report_id'),
+                    'report_status': 'completed',
+                    'report_is_ready': True,
+                    'files': [],
+                    'orphan_report': True,
+                })
+            enriched_simulations.sort(
+                key=lambda row: str(row.get('created_at') or ''), reverse=True
+            )
+        except Exception as merge_exc:  # noqa: BLE001
+            logger.warning(f"تعذر ضم التقارير بلا سجل محاكاة: {merge_exc}")
+
         return jsonify({
             "success": True,
             "data": enriched_simulations,
             "count": len(enriched_simulations),
-            # العدد الحقيقي لكل المحاكاة (لا المقصوص بالـlimit)
-            "total": len(all_sims)
+            # العدد الحقيقي (محاكاة + تقارير بلا سجل) لا المقصوص بالـlimit
+            "total": len({row.get('simulation_id') for row in enriched_simulations if row.get('simulation_id')})
         })
         
     except Exception as e:
