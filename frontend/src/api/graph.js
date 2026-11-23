@@ -64,3 +64,11 @@ export function getProject(projectId) {
     method: 'get'
   })
 }
+
+/**
+ * حذف مشروع/محاكاة بالكامل (ومعه تقريره).
+ * @param {string} projectId
+ */
+export function deleteProject(projectId) {
+  return service.delete(`/api/graph/project/${projectId}`)
+}
