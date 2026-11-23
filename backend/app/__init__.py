@@ -133,6 +133,24 @@ def create_app(config_class=Config):
                 'index': index_exists,
                 'backend': 'postgres' if durable else 'local',
             }
+            # نفس المسار الذي تقرأه قائمة الواجهة: يكشف هل العيب في القراءة أم في الحفظ
+            try:
+                from .services.report_agent import ReportManager as _RM
+
+                listed = _RM.list_reports(limit=200)
+                payload['reports']['readable'] = len(listed)
+                payload['reports']['latest'] = [
+                    {
+                        'id': r.report_id,
+                        'at': (r.created_at or '')[:19],
+                        'status': str(getattr(r.status, 'value', r.status) or ''),
+                        'sim': (r.simulation_id or '')[-6:],
+                    }
+                    for r in listed[:3]
+                ]
+            except Exception as read_exc:  # pragma: no cover
+                payload['reports']['readable'] = None
+                payload['reports']['read_error'] = str(read_exc)[:120]
         except Exception:  # pragma: no cover
             payload['reports'] = {'folders': None}
 
