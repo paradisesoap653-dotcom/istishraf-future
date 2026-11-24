@@ -2941,9 +2941,26 @@ class ReportManager:
             except Exception:  # noqa: BLE001
                 pass
 
+            try:
+                _tot = simulation_counts(sim_id)[1] if sim_id else 0
+            except Exception:  # noqa: BLE001
+                _tot = 0
+            md_content, _rep_c = strip_repeated_count_blocks(md_content, _tot)
+            if _rep_c:
+                logger.info("حُذفت %s فقرة تعيد سرد أعداد المنصّات", _rep_c)
+
             md_content, _dup = dedupe_report_paragraphs(md_content)
             if _dup:
                 logger.info("حُذفت %s فقرة مكررة من التقرير", _dup)
+
+            md_content, _sent = dedupe_repeated_sentences(md_content)
+            if _sent:
+                logger.info("حُذفت %s جملة معادة في التقرير", _sent)
+
+            md_content, _un = replace_placeholder_name(
+                md_content, getattr(outline, "title", "") or "")
+            if _un:
+                logger.info("استُبدل اسم المشروع المؤقت في %s موضعًا", _un)
 
             md_content, _fixed = fix_simulation_date(md_content, _real_date)
             if _fixed:
@@ -3337,46 +3354,116 @@ class ReportManager:
 _QA_TAG_RE = re.compile(r"〔(?!مدخل|افتراض|استنتاج)[^〕]{1,40}〕")
 _DATE_TOKEN_RE = re.compile(r"\d{1,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}")
 _SIM_SENTENCE_KW = ("أُجريت", "أجريت", "جرت", "تمت", "تم إجراء", "أُعدّت", "أعدت")
+_AR_DIGITS = "٠١٢٣٤٥٦٧٨٩"
+_NUM_WORD_RE = re.compile(
+    r"(\d[\d.,]*\s*(?:×|x|X|%|٪)?|\d[\d.,]*\s*(?:مليون|مليار|ألف)(?:\s*دولار)?)"
+)
+
+PLATFORM_NAMES = ("فيسبوك", "واتساب", "تيك توك", "تويتر", "ريديت")
 
 
-def _norm_para(text: str) -> str:
-    """يبسّط الفقرة للمقارنة: بلا رموز، بلا مسافات زائدة."""
-    t = re.sub(r"[*_`#>•\-\[\]()]", " ", text)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t[:110]
+def _plain(text: str) -> str:
+    t = re.sub(r"[*_`#>•\-\[\]()\"'«»]", " ", text)
+    return re.sub(r"\s+", " ", t).strip()
 
 
-def dedupe_report_paragraphs(md: str, min_len: int = 70) -> tuple:
-    """يحذف الفقرات المكررة (أو شبه المكررة) التي يعيد النموذج كتابتها.
+def _shingles(text: str, k: int = 4) -> set:
+    words = [w for w in _plain(text).split() if w]
+    if len(words) < k:
+        return {" ".join(words)} if words else set()
+    return {" ".join(words[i:i + k]) for i in range(len(words) - k + 1)}
 
-    أرجع (النص المنقّى، عدد الفقرات المحذوفة).
-    """
-    blocks = re.split(r"(\n\s*\n)", md)
-    seen, kept, removed = set(), [], 0
-    for block in blocks:
-        plain = re.sub(r"\s+", " ", block).strip()
-        if not plain:
+
+def dedupe_report_paragraphs(md: str, min_len: int = 60, threshold: float = 0.55) -> tuple:
+    """يحذف الفقرة إن كانت مكررة أو شبه مكررة (تشابه ٤-كلمات ≥ العتبة)."""
+    kept, kept_sets, removed = [], [], 0
+    for block in re.split(r"(\n\s*\n)", md):
+        plain = _plain(block)
+        if not plain or block.lstrip().startswith("#") or len(plain) < min_len:
             kept.append(block)
             continue
-        if block.lstrip().startswith("#") or len(plain) < min_len:
-            kept.append(block)
-            continue
-        key = _norm_para(block)
-        if key in seen:
+        sh = _shingles(block)
+        dup = False
+        for other in kept_sets:
+            if not other or not sh:
+                continue
+            inter = len(sh & other)
+            union = len(sh | other)
+            if union and inter / union >= threshold:
+                dup = True
+                break
+            # الاحتواء أرحم من التقاطع: فقرة أطول تعيد نصف الأولى تُعدّ تكرارًا
+            smaller = min(len(sh), len(other))
+            if smaller and inter / smaller >= 0.62:
+                dup = True
+                break
+        if dup:
             removed += 1
             continue
-        seen.add(key)
+        kept_sets.append(sh)
         kept.append(block)
-    out = "".join(kept)
+    out = re.sub(r"\n{3,}", "\n\n", "".join(kept))
+    return out, removed
+
+
+def strip_repeated_count_blocks(md: str, total: int, platforms=PLATFORM_NAMES) -> tuple:
+    """يحذف فقرة تعيد سرد أعداد المنصّات وهي مكتوبة أصلًا في رأس التقرير."""
+    if not total:
+        return md, 0
+    head, sep, tail = md.partition("\n---\n\n")
+    if not sep:
+        return md, 0
+    kept, removed = [], 0
+    for block in re.split(r"(\n\s*\n)", tail):
+        plain = _plain(block)
+        if plain and len(plain) >= 40:
+            hit_names = sum(1 for name in platforms if name in plain)
+            has_total = str(total) in plain or str(total).translate(
+                str.maketrans("0123456789", _AR_DIGITS)) in plain
+            if hit_names >= 3 and has_total:
+                removed += 1
+                continue
+        kept.append(block)
+    return head + sep + re.sub(r"\n{3,}", "\n\n", "".join(kept)), removed
+
+
+def dedupe_repeated_sentences(md: str, min_len: int = 55, thresh: float = 0.8) -> tuple:
+    """يحذف جملةً أُعيد قولها في قسم آخر (نفس الادعاء بصياغة قريبة)."""
+    seen, out_blocks, removed = [], [], 0
+    for block in re.split(r"(\n\s*\n)", md):
+        if not block.strip() or block.lstrip().startswith("#"):
+            out_blocks.append(block)
+            continue
+        parts = re.split(r"(?<=[.!؟])\s+", block)
+        kept_parts = []
+        for sent in parts:
+            plain = _plain(sent)
+            if len(plain) < min_len:
+                kept_parts.append(sent)
+                continue
+            sh = _shingles(sent, k=3)
+            dup = False
+            for other in seen:
+                if not sh or not other:
+                    continue
+                inter = len(sh & other)
+                if inter / min(len(sh), len(other)) >= thresh:
+                    dup = True
+                    break
+            if dup:
+                removed += 1
+                continue
+            seen.append(sh)
+            kept_parts.append(sent)
+        rebuilt = " ".join(kept_parts).strip()
+        out_blocks.append(rebuilt if rebuilt else "")
+    out = "".join(out_blocks)
     out = re.sub(r"\n{3,}", "\n\n", out)
     return out, removed
 
 
 def fix_simulation_date(md: str, real_date: str) -> tuple:
-    """يستبدل أي تاريخ مُختلق في سطر يتحدث عن إجراء المحاكاة بتاريخ التقرير الحقيقي.
-
-    لا يمسّ التواريخ الأخرى (مثل تاريخ منشور مقتبس)، لأنها ليست من اختصاص هذا الفحص.
-    """
+    """يستبدل التاريخ المُختلق التالي لفعل إجراء المحاكاة بتاريخ التقرير الحقيقي."""
     if not real_date:
         return md, 0
     count = 0
@@ -3388,8 +3475,6 @@ def fix_simulation_date(md: str, real_date: str) -> tuple:
         if not hits:
             continue
         kw_pos = min(hits)
-        # التاريخ المعني هو التالي لفعل الإجراء فقط؛ تواريخ المنشورات المقتبسة
-        # التي ترد لاحقًا في السطر نفسه لا تُمسّ.
         match = _DATE_TOKEN_RE.search(line, kw_pos)
         if not match or match.start() - kw_pos > 60:
             continue
@@ -3399,47 +3484,60 @@ def fix_simulation_date(md: str, real_date: str) -> tuple:
 
 
 def collect_qa_tags(md: str) -> tuple:
-    """ينزع وسوم الفحص (〔بلا مصدر〕، 〔رقم يخالف…〕) من المتن ويجمع سطورها في ملحق.
-
-    أرجع (النص، قائمة السطور التي تحتاج تحققًا).
-    """
+    """ينزع وسوم الفحص من المتن، ويعيد سطورها موسومة بأرقامها."""
     notes, out_lines = [], []
     for line in md.split("\n"):
-        tags = _QA_TAG_RE.findall(line)
-        if not tags:
+        if not _QA_TAG_RE.search(line):
             out_lines.append(line)
             continue
-        cleaned = _QA_TAG_RE.sub("", line)
-        cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+        cleaned = re.sub(r"\s+", " ", _QA_TAG_RE.sub("", line)).strip()
         cleaned = re.sub(r"\s+([.،؛])", r"\1", cleaned).strip(" -*")
         if cleaned:
-            notes.append(cleaned[:200])
+            nums = [m.group(1).strip() for m in _NUM_WORD_RE.finditer(cleaned)]
+            notes.append((nums, cleaned))
         out_lines.append(_QA_TAG_RE.sub("", line).rstrip())
-    out = "\n".join(out_lines)
-    out = re.sub(r"\n{3,}", "\n\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", "\n".join(out_lines))
     return out, notes
 
 
 def append_qa_appendix(md: str, notes: list) -> str:
+    """ملحق مضغوط: يجمع المواضع بحسب الرقم المخالف لا بحسب الجملة."""
     if not notes:
         return md
-    uniq, seen = [], set()
-    for note in notes:
-        key = _norm_para(note)
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        uniq.append(note)
-    if not uniq:
+    groups, order = {}, []
+    for nums, line in notes:
+        key = "، ".join(sorted(set(nums[:2]))) if nums else "بلا رقم محدد"
+        if key not in groups:
+            groups[key] = {"count": 0, "first": line}
+            order.append(key)
+        groups[key]["count"] += 1
+
+    rows = []
+    for key in order[:10]:
+        item = groups[key]
+        snippet = item["first"]
+        if len(snippet) > 100:
+            snippet = snippet[:100].rstrip() + "…"
+        times = f"{item['count']} موضعًا" if item["count"] > 1 else "موضع واحد"
+        rows.append(f"- **{key}** — يرد في {times}. أوله: {snippet}")
+    if not rows:
         return md
-    body = "\n".join(f"- {n}" for n in uniq[:12])
     return (
         md.rstrip()
         + "\n\n## بنود تحتاج تحقّقًا قبل النشر\n\n"
-        + "هذه الجمل وردت بلا سند رقمي في بيانات المحاكاة أو تخالفها، فتُقرأ كفرض لا كحقيقة:\n\n"
-        + body
+        + "أرقام وردت في المتن بلا سند في بيانات المحاكاة أو تخالفها. "
+        + "تُقرأ كفرض لا كحقيقة:\n\n"
+        + "\n".join(rows)
         + "\n"
     )
+
+
+def replace_placeholder_name(md: str, fallback: str) -> tuple:
+    """«Unnamed Project» اسم مؤقت: يُستبدل بعنوان التقرير حتى لا يُقرأ في التقرير."""
+    if not fallback or "Unnamed Project" not in md:
+        return md, 0
+    n = md.count("Unnamed Project")
+    return md.replace("Unnamed Project", fallback.strip()), n
 
 UNSOURCED_TAG = "〔بلا مصدر〕"
 _DIGIT_MAP = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
