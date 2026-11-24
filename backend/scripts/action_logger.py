@@ -15,9 +15,27 @@
 import json
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
+
+
+# ── ساعة الأفعال داخل الجولة ──
+# الجولة تُحسب دفعةً واحدة، فتُكتب أفعالها كلها في الثانية نفسها، فيبدو
+# الخط الزمني ثابتًا وأي تحليل زمني بلا معنى. نُقدّم كل فعل ٥ ثوانٍ عن سابقه
+# داخل الجولة نفسها، فلا يتساوى فعلان أبدًا.
+_ACTION_CLOCK: Dict[Any, datetime] = {}
+
+
+def _stamped(platform: str, round_num: int) -> str:
+    """وقت الفعل: يبقى الوقت الحقيقي، لكن لا يتساوى فعلان في الثانية نفسها."""
+    key = (platform, int(round_num or 0))
+    now = datetime.now().replace(microsecond=0)
+    last = _ACTION_CLOCK.get(key)
+    if last is not None and now <= last:
+        now = last + timedelta(seconds=1)
+    _ACTION_CLOCK[key] = now
+    return now.isoformat()
 
 class PlatformActionLogger:
     """单平台动作日志记录器"""
@@ -226,7 +244,7 @@ class ActionLogger:
     ):
         entry = {
             "round": round_num,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": _stamped(platform, round_num),
             "platform": platform,
             "agent_id": agent_id,
             "agent_name": agent_name,
