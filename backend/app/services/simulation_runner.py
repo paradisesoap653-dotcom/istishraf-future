@@ -12,9 +12,9 @@ import threading
 import subprocess
 import signal
 import atexit
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from queue import Queue
 
@@ -57,6 +57,29 @@ def persist_file(path: str) -> None:
             logger.warning(f"تعذر حفظ الملف في التخزين الدائم: {path} ({exc})")
 
 logger = get_logger('mirofish.simulation_runner')
+
+# ── ساعة الأفعال: تضمن تزايدًا صارمًا لوقت كل فعل داخل الجولة ──
+# محرّك المحاكاة يختم كل أفعال الجولة بالوقت نفسه، فيصير الخط الزمني كاذبًا
+# وأي تحليل زمني في التقرير مبنيًا على ترتيب غير حقيقي.
+_ACTION_CLOCK: Dict[Tuple[str, str, int], datetime] = {}
+_ACTION_CLOCK_LOCK = threading.Lock()
+
+
+def _next_action_timestamp(simulation_id: str, platform: str, round_num: int,
+                           raw_stamp: str) -> str:
+    """يعيد وقتًا متزايدًا بالضرورة: إن تكرر وقت المحرّك يُقدَّم ٧ ثوانٍ."""
+    try:
+        base = datetime.fromisoformat(str(raw_stamp))
+    except Exception:  # noqa: BLE001
+        base = datetime.now()
+    key = (simulation_id, platform, int(round_num or 0))
+    with _ACTION_CLOCK_LOCK:
+        last = _ACTION_CLOCK.get(key)
+        if last is not None and base <= last:
+            base = last + timedelta(seconds=7)
+        _ACTION_CLOCK[key] = base
+    return base.isoformat()
+
 
 # 标记是否已注册清理函数
 _cleanup_registered = False
@@ -1079,9 +1102,16 @@ class SimulationRunner:
                                 
                                 continue
                             
+                            _round_no = int(action_data.get("round", 0) or 0)
+                            _stamp = _next_action_timestamp(
+                                state.simulation_id,
+                                platform,
+                                _round_no,
+                                action_data.get("timestamp") or datetime.now().isoformat(),
+                            )
                             action = AgentAction(
                                 round_num=action_data.get("round", 0),
-                                timestamp=action_data.get("timestamp", datetime.now().isoformat()),
+                                timestamp=_stamp,
                                 platform=platform,
                                 agent_id=action_data.get("agent_id", 0),
                                 agent_name=action_data.get("agent_name", ""),
