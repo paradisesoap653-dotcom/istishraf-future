@@ -144,7 +144,7 @@ def write_simulation_artifacts(
                 ]
 
                 round_actions = 0
-                for act in entries:
+                for act_idx, act in enumerate(entries):
                     agent_id = int(act.get("agent_id", 0))
                     agent_profile = next(
                         (p for p in profiles if int(p.get("user_id", -1)) == agent_id),
@@ -156,6 +156,13 @@ def write_simulation_artifacts(
                     if not content:
                         continue
 
+                    # الأفعال كانت تحمل وقت الجولة نفسه بالثانية، فيبدو الخط
+                    # الزمني ثابتًا؛ كل فعل يتقدّم ٤٠ ثانية عن سابقه.
+                    act_time = (
+                        base_time
+                        + timedelta(minutes=30 * r_idx, seconds=40 * act_idx)
+                    ).isoformat()
+
                     if action_type == "CREATE_COMMENT" and post_counter > 0:
                         # التعليق يذهب للمنشور المطلوب داخل المنصّة نفسها
                         wanted = int(act.get("post_id") or 0)
@@ -165,14 +172,14 @@ def write_simulation_artifacts(
                             target_post = plat_posts[-1] if plat_posts else max(1, post_counter)
                         cur.execute(
                             "INSERT INTO comment (post_id, user_id, content, created_at, num_likes) VALUES (?, ?, ?, ?, ?)",
-                            (target_post, agent_id, content, r_time, int(act.get("likes", 4))),
+                            (target_post, agent_id, content, act_time, int(act.get("likes", 4))),
                         )
                         action_args = {"post_id": target_post, "content": content}
                     else:
                         action_type = "CREATE_POST"
                         cur.execute(
                             "INSERT INTO post (user_id, content, created_at, num_likes, num_shares) VALUES (?, ?, ?, ?, ?)",
-                            (agent_id, content, r_time, int(act.get("likes", 9)), int(act.get("shares", 3))),
+                            (agent_id, content, act_time, int(act.get("likes", 9)), int(act.get("shares", 3))),
                         )
                         post_counter = cur.lastrowid or (post_counter + 1)
                         plat_posts.append(post_counter)
@@ -180,13 +187,13 @@ def write_simulation_artifacts(
 
                     cur.execute(
                         "INSERT INTO trace (user_id, created_at, action, info) VALUES (?, ?, ?, ?)",
-                        (agent_id, r_time, action_type, json.dumps(action_args, ensure_ascii=False)),
+                        (agent_id, act_time, action_type, json.dumps(action_args, ensure_ascii=False)),
                     )
                     af.write(
                         json.dumps(
                             {
                                 "round": r_idx,
-                                "timestamp": r_time,
+                                "timestamp": act_time,
                                 "platform": plat,
                                 "agent_id": agent_id,
                                 "agent_name": agent_name,
@@ -289,6 +296,50 @@ def max_sim_rounds() -> int:
     except (TypeError, ValueError):
         return 12
 
+
+
+def _norm_text(text: str) -> str:
+    """يبسّط النص للمقارنة: بلا رموز ولا مسافات زائدة."""
+    import re as _re
+    t = _re.sub(r"[*_`#>•\-\[\]()\"«»\u2066\u2069]|#", " ", str(text or ""))
+    return _re.sub(r"\s+", " ", t).strip()
+
+
+def _shingles(text: str, k: int = 4) -> set:
+    words = _norm_text(text).split()
+    if len(words) < k:
+        return {" ".join(words)} if words else set()
+    return {" ".join(words[i:i + k]) for i in range(len(words) - k + 1)}
+
+
+def _drop_repeats(rounds_data: List[Dict[str, Any]], thresh: float = 0.70) -> int:
+    """يحذف الفعل الذي يعيد فكرة سبق قولها (بأي وكيل، على أي منصّة).
+
+    المحرك يطلب من النموذج تطورًا جديدًا كل جولة، لكن النموذج يعيد الصياغة
+    نفسها؛ فالتنقية هنا حتمية ولا تعتمد على طاعة النموذج.
+    """
+    seen: List[set] = []
+    removed = 0
+    for r_item in rounds_data:
+        kept = []
+        for act in (r_item.get("actions") or []):
+            sh = _shingles(act.get("content"))
+            if sh:
+                dup = False
+                for other in seen:
+                    if not other:
+                        continue
+                    inter = len(sh & other)
+                    if inter / min(len(sh), len(other)) >= thresh:
+                        dup = True
+                        break
+                if dup:
+                    removed += 1
+                    continue
+                seen.append(sh)
+            kept.append(act)
+        r_item["actions"] = kept
+    return removed
 
 def _clean_rounds(raw: Any) -> List[Dict[str, Any]]:
     """يُنقّي ما يعيده النموذج: كائنات فقط، ولكل فعل محتوى غير فارغ."""
@@ -494,6 +545,9 @@ def run_serverless_simulation(
             "أعطِ لكل تفاعل أرقام تفاعل واقعية (likes و shares) تناسب المنصّة والموضوع.\n"
             "نوّع الوكلاء: لا تجعل الوكيل نفسه يتكلم أكثر من مرتين في الجولة، وأشرك على الأقل "
             "خمسة وكلاء مختلفين في كل جولة.\n"
+            "قاعدة التطور (إلزامية): كل جولة تُدخل شيئًا لم يرد قبلها — حدث جديد، رقم جديد، "
+            "تصريح، اعتراض، أو نتيجة. يُمنع تكرار فكرة أو رقم أو جملة سبق ذكرها في الجولات "
+            "السابقة، ويُمنع إعادة صياغة منشور سابق بكلمات أخرى. لا تعِد أي رقم استخدمته.\n"
             f"أعد JSON فقط بهذا الهيكل: {json_spec}"
         )
 
@@ -566,6 +620,12 @@ def run_serverless_simulation(
                 if 0 <= agent_id < len(agent_summary):
                     act.setdefault("agent_name", agent_summary[agent_id]["name"])
         rounds_data.extend(valid)
+        try:
+            _dup = _drop_repeats(rounds_data)
+            if _dup:
+                logger.info("حُذف %s فعلًا يعيد فكرة سابقة", _dup)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر تنقية الأفعال المتكررة: %s", exc)
         next_round += len(valid)
 
     # طبقة التفاعل العميق: تعليقات على المنشورات الأكثر جذبًا، فالتفاعل ليس
@@ -753,4 +813,4 @@ def run_serverless_simulation(
         "twitter_actions": counts.get("twitter", 0),
         "reddit_actions": counts.get("reddit", 0),
         "total_actions": sum(counts.values()),
-    }
+        }
