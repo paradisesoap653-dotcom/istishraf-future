@@ -1863,6 +1863,12 @@ class ReportAgent:
             
             # 保存最终报告
             ReportManager.save_report(report)
+
+            # تقرير واحد لكل محاكاة: لا نترك مجلدات تقارير قديمة تتضاعف
+            try:
+                prune_older_reports(report.simulation_id, report.report_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("تعذر تنقية التقارير القديمة: %s", exc)
             ReportManager.update_progress(
                 report_id, "completed", 100, t('progress.reportComplete'),
                 completed_sections=completed_section_titles
@@ -3857,6 +3863,34 @@ def reports_for_simulation(simulation_id: str) -> List[str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("تعذر قراءة فهرس التقارير للمحاكاة %s: %s", sim, exc)
         return []
+
+
+def prune_older_reports(simulation_id: str, keep_report_id: str) -> int:
+    """يُبقي تقريرًا واحدًا لكل محاكاة: يحذف كل تقرير أقدم لنفس المحاكاة.
+
+    كل ضغطة «توليد» كانت تُنشئ مجلد تقرير جديدًا، فتتراكم أربعة تقارير
+    للمحاكاة الواحدة وتتضاعف القائمة. الحذف بعد نجاح التوليد يمنع التراكم.
+    """
+    if not simulation_id or not keep_report_id:
+        return 0
+    removed = 0
+    try:
+        reports = ReportManager.list_reports(simulation_id=simulation_id, limit=200)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر سرد تقارير المحاكاة للتنقية: %s", exc)
+        return 0
+    for rep in reports:
+        if rep.report_id == keep_report_id:
+            continue
+        try:
+            if ReportManager.delete_report(rep.report_id):
+                removed += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر حذف تقرير قديم %s: %s", rep.report_id, exc)
+    if removed:
+        logger.info("حُذف %s تقريرًا قديمًا للمحاكاة %s (أُبقي %s)",
+                    removed, simulation_id, keep_report_id)
+    return removed
 
 
 def delete_reports_for_simulation(simulation_id: str) -> int:
