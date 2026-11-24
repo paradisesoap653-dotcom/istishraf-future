@@ -737,6 +737,11 @@ class SimulationConfigGenerator:
 حتى يُسند كل منشور إلى وكيل مناسب. مثال: البيان الرسمي ينشره Official/LocalAuthority،
 والخبر تنشره MediaOutlet، ورأي الطلاب ينشره Passenger/Student.
 
+**قاعدة منع التكرار (إلزامية)**: لكل منشور زاوية مختلفة عن غيره — حادثة، رقم،
+اعتراض، عرض، سؤال، أو تطور جديد. ويُمنع أن يكون منشوران يقولان الفكرة نفسها
+بصياغتين متقاربتين. اجعل «narrative_direction» يصف تطوّر الرأي من الجولة الأولى
+إلى الأخيرة (ماذا يتغيّر؟ من يقتنع؟ من يعترض؟) بدل وصف ثابت.
+
 أعد JSON فقط (بلا markdown):
 {{
     "hot_topics": ["كلمة1", "كلمة2", ...],
@@ -751,7 +756,8 @@ class SimulationConfigGenerator:
         system_prompt = (
             "أنت خبير في تحليل الرأي العام. أعد JSON صالحًا فقط بلا أي شرح، "
             "وكل المحتوى النصي (المنشورات والموضوعات والوصف) بالعربية الفصحى، "
-            "ولا تكتب أي حرف صيني."
+            "ولا تكتب أي حرف صيني. كل منشور فكرة مستقلة: لا تكرر الفكرة نفسها "
+            "بصياغة أخرى، ولا تعيد استخدام نفس الرقم في أكثر من منشور."
         )
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}\nIMPORTANT: The 'poster_type' field value MUST be in English PascalCase exactly matching the available entity types. Only 'content', 'narrative_direction', 'hot_topics' and 'reasoning' fields should use the specified language."
 
@@ -1041,4 +1047,3 @@ class SimulationConfigGenerator:
                 "influence_weight": 1.0
             }
     
-
