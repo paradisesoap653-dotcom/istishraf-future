@@ -2892,6 +2892,9 @@ class ReportManager:
             try:
                 _counts2, _total2 = simulation_counts(sim_id) if sim_id else ({}, 0)
                 if _counts2:
+                    md_content, _aligned = align_platform_counts(md_content, _counts2)
+                    if _aligned:
+                        logger.info("صُحّح %s عددًا منسوبًا لمنصّة في المتن", _aligned)
                     md_content, _flagged = flag_count_conflicts(md_content, _counts2, _total2)
                     if _flagged:
                         logger.info("وُسم %s سطرًا برقم مخالف للمحاكاة", _flagged)
@@ -3608,6 +3611,24 @@ def _token_backed(token: str, following: str, known_numbers: set) -> bool:
     return _canonical_number(token, following) in known_numbers or digits in known_numbers
 
 
+
+def _is_date_like(line: str, start: int, end: int) -> bool:
+    """هل الرقم تاريخ أو سنة؟ هذان ليسا ادعاءً يحتاج مصدرًا فلا يُوسمان."""
+    token = line[start:end].strip()
+    digits = _digits_of(token)
+    if not digits:
+        return False
+    if any(sep in token for sep in ("/", "-", ".")) and len(token) >= 4:
+        return True  # تاريخ كامل مثل 15/08/2026 أو 2026-11-24
+    before = line[start - 1:start]
+    after = line[end:end + 1]
+    if before in ("/", "-", ".", "\\", "\u200f") or after in ("/", "-"):
+        return True
+    if len(digits) == 4 and "1900" <= digits <= "2099":
+        return True
+    return False
+
+
 def mark_unsourced_numbers(text: str, known: Dict[str, Any],
                            extra_numbers: Optional[set] = None) -> Tuple[str, int]:
     """يضع 〔بلا مصدر〕 في نهاية أي سطر يحمل رقمًا غير مسنود.
@@ -3640,7 +3661,10 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any],
             out.append(line)
             continue
         translated = stripped.translate(_DIGIT_MAP)
-        tokens = [m for m in _NUM_TOKEN_RE.finditer(translated) if _digits_of(m.group(0))]
+        tokens = [
+            m for m in _NUM_TOKEN_RE.finditer(translated)
+            if _digits_of(m.group(0)) and not _is_date_like(translated, m.start(), m.end())
+        ]
         if not tokens:
             out.append(line)
             continue
@@ -3711,6 +3735,41 @@ def simulation_counts_block(counts: Dict[str, int], total: int) -> str:
 def _alias_in_line(label: str, lowered: str) -> bool:
     aliases = _PLATFORM_ALIASES.get(label, (label,))
     return any(alias.strip() in lowered for alias in aliases)
+
+
+
+_PLATFORM_COUNT_RE = re.compile(
+    r"(فيسبوك|واتساب|تيك\s?توك|تويتر|ريديت|إكس)[^\n\d]{0,18}?(\d{1,4})\s*(?:حدث|حدثًا|حدثا|تفاعل|تفاعلًا|تفاعلا)"
+)
+
+
+def align_platform_counts(text: str, counts: Dict[str, int]) -> Tuple[str, int]:
+    """يستبدل عدد التفاعلات المنسوب لمنصّة في المتن بعددها الحقيقي.
+
+    النموذج كتب «فيسبوك، ٢٧ حدثًا» والحقيقة ١٧. رأس التقرير يعرض الأعداد
+    الصحيحة، فترك رقم مخالف في المتن يجعل التقرير يناقض نفسه.
+    """
+    if not text or not counts:
+        return text, 0
+    fixed = 0
+
+    def _sub(match: "re.Match") -> str:
+        nonlocal fixed
+        label = match.group(1)
+        stated = _digits_of(match.group(2))
+        for key, real in counts.items():
+            aliases = _PLATFORM_ALIASES.get(key) or _PLATFORM_ALIASES.get(key.split(" (")[0])
+            matched = (any(a.strip() in label for a in aliases) if aliases
+                       else key.split(" (")[0].strip() in label)
+            if not matched:
+                continue
+            if stated and str(real) != stated:
+                fixed += 1
+                return match.group(0).replace(match.group(2), str(real), 1)
+            return match.group(0)
+        return match.group(0)
+
+    return _PLATFORM_COUNT_RE.sub(_sub, text), fixed
 
 
 def flag_count_conflicts(text: str, counts: Dict[str, int], total: int) -> Tuple[str, int]:
