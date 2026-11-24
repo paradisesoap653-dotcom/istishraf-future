@@ -327,7 +327,12 @@ def generate_ontology():
         
         # 获取参数
         simulation_requirement = request.form.get('simulation_requirement', '')
-        project_name = request.form.get('project_name', 'Unnamed Project')
+        # اسم مؤقت يُفسد أي بحث لاحق (جوجل/ترندز)؛ نستنبط اسمًا من الملف بدلًا منه
+        project_name = (request.form.get('project_name') or '').strip()
+        if not project_name:
+            _f = (request.files.get('file') or request.files.get('simulation_file'))
+            _base = os.path.splitext(os.path.basename(getattr(_f, 'filename', '') or ''))[0]
+            project_name = _base.strip() or 'مشروع استشراف'
         additional_context = request.form.get('additional_context', '')
         
         logger.debug(f"项目名称: {project_name}")
@@ -934,8 +939,18 @@ def get_graph_data(graph_id: str):
             }), 500
         
         builder = GraphBuilderService(api_key=Config.ZEP_API_KEY)
-        graph_data = builder.get_graph_data(graph_id)
-        
+        try:
+            graph_data = builder.get_graph_data(graph_id)
+        except Exception as graph_exc:  # noqa: BLE001
+            _msg = str(graph_exc).lower()
+            # شبكة غير موجودة ليست خطأ خادم: 404 أنظف للواجهة وللمراقبة
+            if any(k in _msg for k in ("not found", "404", "does not exist", "no such")):
+                return jsonify({
+                    "success": False,
+                    "error": f"الشبكة غير موجودة: {graph_id}"
+                }), 404
+            raise
+
         return jsonify({
             "success": True,
             "data": graph_data
@@ -1254,5 +1269,4 @@ def run_graph_build_task(
                 message=t('progress.buildFailed', error=str(e)),
                 error=traceback.format_exc()
             )
-
 
