@@ -106,6 +106,223 @@ def facebook_profile(reference: str) -> Dict[str, Any]:
     }
 
 
+
+# ── منشورات الصفحة الحقيقية ──
+# الهدف: لا نولّد منشورات من الخيال فقط، بل نبدأ من منشورات منشورة فعلًا
+# على صفحة صاحب المشروع، فنكون أمام مادة يمكن للقارئ فتحها والتحقق منها.
+_POST_PATH_HINTS = ('/posts/', '/videos/', '/photos/', '/reel/', '/permalink',
+                    'story_fbid', '/p/', '/watch')
+
+_REF_CLEAN_RE = re.compile(r'^(?:https?://)?(?:www\.|m\.|web\.)?facebook\.com/', re.I)
+
+
+def normalize_page_ref(reference: str) -> str:
+    """اسم الصفحة من أي شكل رابط: facebook.com/اسم ← اسم."""
+    ref = (reference or '').strip()
+    ref = _REF_CLEAN_RE.sub('', ref)
+    ref = ref.split('?')[0].strip('/')
+    return ref.split('/')[0] if ref else ''
+
+
+def facebook_page_posts(reference: str, limit: int = 8,
+                        topic: str = '') -> List[Dict[str, str]]:
+    """منشورات حقيقية من صفحة فيسبوك (غلاف متوافق للدالة العامة)."""
+    return page_posts('facebook', reference, limit=limit, topic=topic)
+
+
+# ── ما يقوله الناس عن الحساب ──
+# منشورات صاحب المشروع نصف الصورة فقط. النصف الآخر آراء من حوله: من يذكره،
+# ومن يعلّق على موضوعه، ومن ينقل عنه. نبحث عن ذكره خارج حساباته ونحتفظ
+# بما يقوله الآخرون — لا نولّد آراء المتابعين من الخيال.
+_MENTION_DOMAINS = ('facebook.com', 'tiktok.com', 'x.com', 'twitter.com', 'reddit.com',
+                    'instagram.com', 'youtube.com', 't.me', 'threads.net', 'linkedin.com',
+                    'blogspot.', 'medium.com', 'wordpress.com')
+
+
+def _label_candidates(reference: str, name: str = '') -> List[str]:
+    """صيغ ذكر الحساب: اسمه الظاهر، ثم معرّفه."""
+    out: List[str] = []
+    for value in (name, str(reference or '').strip().lstrip('@')):
+        value = ' '.join(str(value or '').split())
+        if value and value not in out and len(value) > 2:
+            out.append(value)
+    return out
+
+
+def page_mentions(platform: str, reference: str, limit: int = 6,
+                  topic: str = '', name: str = '') -> List[Dict[str, str]]:
+    """ما ينشره الآخرون عن الحساب أو عن موضوعه، على المنصّات، بروابطهم.
+
+    نستبعد منشورات الحساب نفسه: هذه ليست أصواتًا حوله بل صوته.
+    """
+    plat = str(platform or '').strip().lower() or detect_platform(reference)
+    rule = _PLATFORM_RULES.get(plat)
+    if not rule:
+        raise ValueError('منصّة غير مدعومة')
+    ref = normalize_any_ref(plat, reference)
+    if not ref:
+        raise ValueError('الرابط لا يحتوي اسم حساب صالحًا')
+
+    labels = _label_candidates(ref, name)
+    if not labels:
+        return []
+    words = _topic_words(topic, 4)
+
+    mentions: List[Dict[str, str]] = []
+    seen = set()
+    ref_low = ref.lower().lstrip('@')
+    for label in labels[:2]:
+        if len(mentions) >= int(limit):
+            break
+        query = f'"{label}"' + (f' {words}' if words else '')
+        try:
+            data = _get({'engine': 'google', 'q': query, 'num': 10, 'hl': 'ar'})
+        except Exception:  # noqa: BLE001 - ذكر الحساب إضافة، وفشله لا يُسقط القراءة
+            continue
+        for item in data.get('organic_results') or []:
+            link = str(item.get('link') or '').strip()
+            low = link.lower()
+            if not link or ref_low in low:
+                continue                      # كلام الحساب نفسه
+            if not any(domain in low for domain in _MENTION_DOMAINS):
+                continue                      # نريد كلام الناس لا صفحات تعريفية
+            if link in seen:
+                continue
+            text = str(item.get('snippet') or item.get('title') or '').strip()
+            if len(text) < 25:
+                continue
+            seen.add(link)
+            mentions.append({
+                'platform': plat,
+                'url': link,
+                'title': str(item.get('title') or '')[:140],
+                'text': text[:400],
+                'date': str(item.get('date') or ''),
+                'found_by': label,
+            })
+            if len(mentions) >= int(limit):
+                break
+    return mentions
+
+
+# ── منصّات متعدّدة: فيسبوك، تيك توك، إكس ──
+# المبدأ: رابط الصفحة ليس زينة في التقرير، بل مدخل نقرأ منه المحتوى المنشور
+# فعلًا، ثم نبحث داخل الصفحة نفسها عن الموضوع المطروح.
+_PLATFORM_RULES: Dict[str, Dict[str, Any]] = {
+    'facebook': {
+        'domains': ('facebook.com',),
+        'hints': ('/posts/', '/videos/', '/photos/', '/reel/', '/permalink',
+                  'story_fbid', '/p/', '/watch'),
+        'label': 'فيسبوك',
+    },
+    'tiktok': {
+        'domains': ('tiktok.com',),
+        'hints': ('/video/', '/photo/'),
+        'label': 'تيك توك',
+    },
+    'twitter': {
+        'domains': ('x.com', 'twitter.com'),
+        'hints': ('/status/', '/statuses/'),
+        'label': 'إكس (تويتر)',
+    },
+}
+
+_HANDLE_PREFIXES = ('@',)
+
+
+def detect_platform(reference: str) -> str:
+    """المنصّة من شكل الرابط. المجرّد (اسم صفحة) يبقى فيسبوك كما كان."""
+    text = str(reference or '').strip().lower()
+    if not text:
+        return ''
+    for plat, rule in _PLATFORM_RULES.items():
+        if any(domain in text for domain in rule['domains']):
+            return plat
+    if text.startswith('@'):
+        return ''          # «@اسم» يصلح لتيك توك وإكس: لا نخمّن
+    return 'facebook'
+
+
+def normalize_any_ref(platform: str, reference: str) -> str:
+    """اسم الحساب/الصفحة من أي شكل رابط لتلك المنصّة."""
+    rule = _PLATFORM_RULES.get(platform)
+    if not rule:
+        return ''
+    ref = str(reference or '').strip()
+    ref = re.sub(r'^https?://', '', ref, flags=re.I)
+    ref = re.sub(r'^(?:www\.|m\.|mobile\.|web\.)', '', ref, flags=re.I)
+    low = ref.lower()
+    for domain in rule['domains']:
+        if low.startswith(domain + '/'):
+            ref = ref[len(domain) + 1:]
+            break
+        if low.rstrip('/') == domain:
+            ref = ''
+            break
+    ref = ref.split('?')[0].split('#')[0].strip('/')
+    handle = ref.split('/')[0].strip()
+    return handle
+
+
+def _topic_words(topic: str, limit: int = 5) -> str:
+    """كلمات الموضوع للبحث داخل الصفحة (نُسقط كلمات الوصل القصيرة)."""
+    words = [w for w in re.split(r'[\s،,.؛;:!؟?"\'«»()\[\]]+', str(topic or '')) if len(w) > 2]
+    return ' '.join(words[:limit])
+
+
+def page_posts(platform: str, reference: str, limit: int = 8,
+               topic: str = '') -> List[Dict[str, str]]:
+    """منشورات حقيقية منشورة على الحساب، مع روابطها كما هي.
+
+    لا نكتفي بقراءة الصفحة: نبحث داخلها عن الموضوع المطروح (site:حساب + موضوع)
+    حتى تكون التعليقات على مادة قريبة من سياق المشروع، لا على أي منشور قديم.
+    """
+    plat = str(platform or '').strip().lower() or detect_platform(reference)
+    rule = _PLATFORM_RULES.get(plat)
+    if not rule:
+        raise ValueError('القراءة من رابط الصفحة متاحة لفيسبوك وتيك توك وإكس')
+    ref = normalize_any_ref(plat, reference)
+    if not ref:
+        raise ValueError('الرابط لا يحتوي اسم حساب صالحًا')
+
+    query = f"site:{rule['domains'][0]}/{ref}"
+    words = _topic_words(topic)
+    if words:
+        query = f"{query} {words}"
+
+    data = _get({'engine': 'google', 'q': query, 'num': max(int(limit) * 2, 10), 'hl': 'ar'})
+    posts: List[Dict[str, str]] = []
+    seen = set()
+    ref_low = ref.lower()
+    for item in data.get('organic_results') or []:
+        link = str(item.get('link') or '').strip()
+        low = link.lower()
+        if not link or not any(domain in low for domain in rule['domains']):
+            continue
+        if ref_low not in low:
+            continue                      # نتيجة من حساب آخر
+        if not any(hint in low for hint in rule['hints']):
+            continue                      # صفحة/بروفايل لا منشور
+        if link in seen:
+            continue
+        snippet = str(item.get('snippet') or '').strip()
+        title = str(item.get('title') or '').strip()
+        text = snippet or title
+        if len(text) < 20:
+            continue
+        seen.add(link)
+        posts.append({
+            'platform': plat,
+            'url': link,
+            'title': title[:140],
+            'text': text[:400],
+            'date': str(item.get('date') or ''),
+        })
+        if len(posts) >= int(limit):
+            break
+    return posts
+
+
 _SEGMENT_SPLIT = re.compile(r'[—–\-:|/\\،,؛;«»()\[\]]')
 
 
@@ -259,4 +476,3 @@ def trend_summary(keyword: str, geo: str = 'SD', months: int = 3,
         'جوجل لا يملك بيانات كافية عن هذه الكلمة في النطاقات المتاحة. '
         'جرّب كلمة واحدة قصيرة (اسم شخص أو شركة) بدل جملة كاملة.'
     )
-
