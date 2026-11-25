@@ -459,6 +459,93 @@ def run_serverless_simulation(
     narrative = sim_config.get("event_config", {}).get("narrative_direction", "")
     initial_posts = sim_config.get("event_config", {}).get("initial_posts", [])
 
+    # منشورات حقيقية منشورة على حسابات صاحب المشروع (فيسبوك/تيك توك/إكس)،
+    # تُقرأ من روابط الصفحات التي أدخلها. تبدأ المحاكاة منها لأن القارئ
+    # يستطيع فتحها والتحقق منها، وهي أولى بالثقة من منشورات مُتخيَّلة.
+    real_by_platform: Dict[str, List[Dict[str, Any]]] = {}
+    platform_mentions: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _read_json(rel: str):
+        path = os.path.join(sim_dir, rel)
+        if not os.path.exists(path):
+            path = ensure_local_file(os.path.join(sim_dir, rel))
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+
+    try:
+        bundle = _read_json("platform_posts.json")
+        if isinstance(bundle, dict):
+            for plat, entry in bundle.items():
+                posts = (entry or {}).get("posts") if isinstance(entry, dict) else entry
+                if isinstance(posts, list) and posts:
+                    real_by_platform[str(plat)] = [
+                        p for p in posts if isinstance(p, dict) and p.get("text")
+                    ]
+                mentions = (entry or {}).get("mentions") if isinstance(entry, dict) else None
+                if isinstance(mentions, list) and mentions:
+                    platform_mentions[str(plat)] = [
+                        m for m in mentions if isinstance(m, dict) and m.get("text")
+                    ]
+        # توافق: ملف فيسبوك القديم
+        legacy = _read_json("facebook_posts.json")
+        if isinstance(legacy, list) and legacy and "facebook" not in real_by_platform:
+            real_by_platform["facebook"] = [
+                p for p in legacy if isinstance(p, dict) and p.get("text")
+            ]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("تعذر قراءة منشورات الحسابات الحقيقية: %s", exc)
+
+    real_posts_block = ""
+    if real_by_platform:
+        sections = []
+        total = 0
+        for plat, posts in real_by_platform.items():
+            name = platform_registry.label(plat) if plat in platform_registry.ORDER else plat
+            lines = []
+            for post in posts[:6]:
+                total += 1
+                text = str(post.get("text") or "").strip().replace("\n", " ")
+                url = str(post.get("url") or "").strip()
+                lines.append(f"{total}. «{text[:200]}» — الرابط: {url}")
+            if lines:
+                sections.append(f"[{name}]\n" + "\n".join(lines))
+        if sections:
+            real_posts_block = (
+                "منشورات حقيقية منشورة فعلًا على حسابات صاحب المشروع "
+                "(قرأناها من روابط صفحاته، ولكلٍّ رابطها):\n"
+                + "\n\n".join(sections)
+                + "\n\nقاعدة: ابنِ على هذه المنشورات — علّق عليها، وأضف تطوّرات جديدة، "
+                "ولا تنسب إلى صاحب الحساب كلامًا لم يقله، ولا تُخترع أرقامًا. "
+                "إذا استشهدت بمنشور فاذكر رابطه كما هو، ومن أي منصّة هو.\n\n"
+            )
+
+    # أصوات من حول صاحب المشروع: من يذكره ويتحدث عن موضوعه على المنصّات.
+    # تدخل الجولات كآراء متعدّدة (مؤيد/ناقد/متشكّك) لا كصوت واحد.
+    if platform_mentions:
+        sections = []
+        total = 0
+        for plat, items in platform_mentions.items():
+            name = platform_registry.label(plat) if plat in platform_registry.ORDER else plat
+            lines = []
+            for item in items[:5]:
+                total += 1
+                text = str(item.get("text") or "").strip().replace("\n", " ")
+                url = str(item.get("url") or "").strip()
+                lines.append(f"{total}. «{text[:200]}» — الرابط: {url}")
+            if lines:
+                sections.append(f"[{name}]\n" + "\n".join(lines))
+        if sections:
+            real_posts_block += (
+                "أصوات من حول صاحب المشروع — منشورات وتعليقات نشرها آخرون عنه أو "
+                "عن موضوعه، ولكلٍّ رابطها:\n"
+                + "\n\n".join(sections)
+                + "\n\nقاعدة: هذه آراء أصحابها لا كلام صاحب المشروع. اجعل الوكلاء "
+                "يعبّرون عن هذا التنوّع (مؤيد وناقد ومتشكّك ومن لا يعرف المشروع)، "
+                "وانسب كل رأي إلى قائله حسب رابطه، ولا تخلط صوت الناقد بصوت المؤيد.\n\n"
+            )
+
     platform_header = f"المنصّات المتاحة في هذه المحاكاة:\n{platform_registry.prompt_block(platforms)}\n\n"
 
     # وقائع بحث الويب عن الموضوع: تجعل الأفعال تتكلم عن الواقع اليوم لا عن العموميات
@@ -466,7 +553,7 @@ def run_serverless_simulation(
         from . import web_research
 
         bundle = web_research.load(sim_dir)
-        research_block = web_research.prompt_block(bundle, max_facts=6)
+        research_block = web_research.prompt_block(bundle, max_facts=15)
         if research_block:
             platform_header += f"{research_block}\n\n"
     except Exception as exc:  # noqa: BLE001
@@ -484,6 +571,7 @@ def run_serverless_simulation(
         f"موضوع الاستشراف: {requirement}\n"
         f"السياق السردي: {narrative}\n"
         f"المنشورات الافتتاحية: {json.dumps(initial_posts, ensure_ascii=False)}\n"
+        f"{real_posts_block}"
         f"قائمة الوكلاء المتاحين: {json.dumps(agent_summary, ensure_ascii=False)}\n\n"
         f"{platform_header}"
         "قواعد المنصّات (مهمة):\n"
@@ -543,7 +631,9 @@ def run_serverless_simulation(
             + f"في كل جولة أدرج {per_round_min} إلى {per_round_target} تفاعلًا مختلفًا بين الوكلاء "
             "(CREATE_POST منشور جديد، CREATE_COMMENT تعليق على منشور سبق في نفس المنصّة).\n"
             "أعطِ لكل تفاعل أرقام تفاعل واقعية (likes و shares) تناسب المنصّة والموضوع.\n"
-            "نوّع الوكلاء: لا تجعل الوكيل نفسه يتكلم أكثر من مرتين في الجولة، وأشرك على الأقل "
+            "استند إلى وقائع البحث أعلاه ووسّعها: اذكر تفاصيل محددة من مصادر مختلفة "
+        "(رقم، تاريخ، تصريح، تقرير)، وقارن بينها، ولا تكتفِ بما ورد في طلب المستخدم.\n"
+        "نوّع الوكلاء: لا تجعل الوكيل نفسه يتكلم أكثر من مرتين في الجولة، وأشرك على الأقل "
             "خمسة وكلاء مختلفين في كل جولة.\n"
             "قاعدة التطور (إلزامية): كل جولة تُدخل شيئًا لم يرد قبلها — حدث جديد، رقم جديد، "
             "تصريح، اعتراض، أو نتيجة. يُمنع تكرار فكرة أو رقم أو جملة سبق ذكرها في الجولات "
@@ -813,4 +903,4 @@ def run_serverless_simulation(
         "twitter_actions": counts.get("twitter", 0),
         "reddit_actions": counts.get("reddit", 0),
         "total_actions": sum(counts.values()),
-        }
+            }
