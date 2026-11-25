@@ -2045,11 +2045,74 @@ class ReportAgent:
             bundle = web_research.load(sim_dir)
             if not bundle:
                 bundle = web_research.load(f"simulations/{self.simulation_id}")
-            block = web_research.prompt_block(bundle, max_facts=8)
+            # كان ٨ فقط، فيتكرر المصدر نفسه ويضيق هامش التوثيق
+            block = web_research.prompt_block(bundle, max_facts=20)
             if block:
                 head.append(block)
+                head.append(
+                    "قاعدة التوثيق (إلزامية): كل ادعاء واقعي (رقم، تاريخ، حادثة، تصريح) "
+                    "يُرفَق برابطه الكامل من قائمة المصادر أعلاه كما هو — بلا اختصار وبلا «…». "
+                    "لا تخترع رابطًا ولا تكتب رابطًا ناقصًا. وإن لم يكن للادعاء مصدر في القائمة "
+                    "فاكتبه مع عبارة «(بلا مصدر مستقل)» ولا تقدّمه كحقيقة."
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("تعذر إدراج وقائع بحث الويب في التقرير: %s", exc)
+
+        # منشورات صاحب المشروع الحقيقية التي قرأناها من روابط حساباته:
+        # لا تُذكر الصفحة كزينة، بل تُقتبس مادّتها بروابطها.
+        try:
+            bundle_posts = storage.read_json(
+                f"simulations/{self.simulation_id}/platform_posts.json"
+            ) or {}
+            if isinstance(bundle_posts, dict):
+                sections: List[str] = []
+                count = 0
+                for plat, entry in bundle_posts.items():
+                    posts = (entry or {}).get("posts") if isinstance(entry, dict) else entry
+                    if not isinstance(posts, list) or not posts:
+                        continue
+                    name = (platform_registry.label(plat)
+                            if plat in platform_registry.ORDER else str(plat))
+                    page_url = str((entry or {}).get("url") or "") if isinstance(entry, dict) else ""
+                    lines = []
+                    for post in posts[:6]:
+                        if not isinstance(post, dict):
+                            continue
+                        text = str(post.get("text") or "").strip().replace("\n", " ")
+                        url = str(post.get("url") or "").strip()
+                        if not (text and url):
+                            continue
+                        count += 1
+                        lines.append(f"{count}. «{text[:220]}» — الرابط: {url}")
+                    if lines:
+                        head_url = f" (الحساب: {page_url})" if page_url else ""
+                        sections.append(f"[{name}]{head_url}\n" + "\n".join(lines))
+                    # ما نشره آخرون عنه أو عن موضوعه: أصوات المتابعين والمحيط
+                    mentions = (entry or {}).get("mentions") if isinstance(entry, dict) else None
+                    if isinstance(mentions, list) and mentions:
+                        mlines = []
+                        for mention in mentions[:6]:
+                            if not isinstance(mention, dict):
+                                continue
+                            mtext = str(mention.get("text") or "").strip().replace("\n", " ")
+                            murl = str(mention.get("url") or "").strip()
+                            if not (mtext and murl):
+                                continue
+                            count += 1
+                            mlines.append(f"{count}. «{mtext[:220]}» — الرابط: {murl}")
+                        if mlines:
+                            sections.append(
+                                f"[{name} — أصوات من حوله]\n" + "\n".join(mlines)
+                            )
+                if sections:
+                    head.append(
+                        "منشورات حقيقية منشورة على حسابات صاحب المشروع وردود من حوله، "
+                        "قرأناها من روابطه — استشهد بها كما هي، وفرّق بين صوت صاحب "
+                        "المشروع (منشوراته) وصوت الآخرين (أصوات من حوله):\n"
+                        + "\n\n".join(sections)
+                    )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("تعذر إدراج منشورات الحسابات الحقيقية في التقرير: %s", exc)
 
         mix_line = self._mix_line()
         if mix_line:
@@ -2975,6 +3038,14 @@ class ReportManager:
             if _fixed:
                 logger.info("صُحّح تاريخ المحاكاة في %s موضعًا", _fixed)
 
+            md_content, _links = drop_truncated_links(md_content)
+            if _links:
+                logger.info("حُذف %s رابطًا مبتورًا من التقرير", _links)
+
+            md_content, _cut = trim_dangling_tail(md_content)
+            if _cut:
+                logger.info("قُطعت جملة أخيرة مبتورة من التقرير")
+
             md_content, _qa = collect_qa_tags(md_content)
             md_content = append_qa_appendix(md_content, _qa)
 
@@ -3541,6 +3612,54 @@ def append_qa_appendix(md: str, notes: list) -> str:
     )
 
 
+
+
+_BROKEN_LINK_RE = re.compile(r"https?://\S*(?:…|\.\.\.)\S*")
+
+
+def drop_truncated_links(md: str) -> tuple:
+    """يحذف الروابط المبتورة («…/videos/…»): لا تُفتح ولا تُوثّق شيئًا."""
+    if not md or ("…" not in md and "..." not in md):
+        return md, 0
+    count = 0
+
+    def _sub(match: "re.Match") -> str:
+        nonlocal count
+        count += 1
+        return ""
+
+    out = _BROKEN_LINK_RE.sub(_sub, md)
+    out = re.sub(r"[ \t]{2,}", " ", out)
+    return out, count
+
+
+def trim_dangling_tail(md: str) -> tuple:
+    """يقطع الجملة الأخيرة المبتورة: التقرير لا ينتهي بنصف جملة.
+
+    ويحدث فعلًا: مقطع يصل حدّ الرموز فيُسلَّم مبتورًا («...تقريرًا في»).
+    """
+    if not md or not md.strip():
+        return md, 0
+    lines = md.rstrip().split("\n")
+    idx = None
+    for i in range(len(lines) - 1, -1, -1):
+        stripped = lines[i].strip()
+        if stripped:
+            idx = i
+            break
+    if idx is None:
+        return md, 0
+    last = lines[idx].strip()
+    if last.startswith(("#", "-", "*", ">", "|")) or last.endswith((".", "!", "؟", "?", ":", "…", ")", "”")):
+        return md, 0
+    cut = max(lines[idx].rfind(ch) for ch in (".", "!", "؟", "?"))
+    if cut <= 0:
+        lines[idx] = ""  # لا نهاية جملة أصلًا: تُحذف الفقرة المبتورة
+    else:
+        lines[idx] = lines[idx][: cut + 1].rstrip()
+    return "\n".join(lines).rstrip() + "\n", 1
+
+
 def replace_placeholder_name(md: str, fallback: str) -> tuple:
     """«Unnamed Project» اسم مؤقت: يُستبدل بعنوان التقرير حتى لا يُقرأ في التقرير."""
     if not fallback or "Unnamed Project" not in md:
@@ -3612,6 +3731,15 @@ def _token_backed(token: str, following: str, known_numbers: set) -> bool:
 
 
 
+
+_DATE_MASK_RE = re.compile(r"\d{1,4}\s*[/\-.]\s*\d{1,2}\s*[/\-.]\s*\d{2,4}")
+
+
+def _mask_dates(line: str) -> str:
+    """يستبدل التاريخ بمسافة حتى لا تُلتقط أجزاؤه (15، 08، 2026) كأرقام ادعاء."""
+    return _DATE_MASK_RE.sub(" ", line)
+
+
 def _is_date_like(line: str, start: int, end: int) -> bool:
     """هل الرقم تاريخ أو سنة؟ هذان ليسا ادعاءً يحتاج مصدرًا فلا يُوسمان."""
     token = line[start:end].strip()
@@ -3660,7 +3788,7 @@ def mark_unsourced_numbers(text: str, known: Dict[str, Any],
         if inside_input or not stripped or "〔" in stripped or "{{fact" in stripped:
             out.append(line)
             continue
-        translated = stripped.translate(_DIGIT_MAP)
+        translated = _mask_dates(stripped.translate(_DIGIT_MAP))
         tokens = [
             m for m in _NUM_TOKEN_RE.finditer(translated)
             if _digits_of(m.group(0)) and not _is_date_like(translated, m.start(), m.end())
@@ -3784,7 +3912,7 @@ def flag_count_conflicts(text: str, counts: Dict[str, int], total: int) -> Tuple
     flagged = 0
     for line in text.split("\n"):
         stripped = line.strip()
-        lowered = stripped.translate(_DIGIT_MAP).lower()
+        lowered = _mask_dates(stripped.translate(_DIGIT_MAP)).lower()
         if (not stripped or "〔" in stripped or stripped.startswith("#")
                 or not any(word in lowered for word in _COUNT_WORDS)):
             out.append(line)
