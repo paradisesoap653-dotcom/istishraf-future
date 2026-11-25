@@ -2630,47 +2630,130 @@ def save_platform_inputs(simulation_id: str):
 
 @simulation_bp.route('/<simulation_id>/platform-inputs/lookup', methods=['POST'])
 def lookup_facebook_followers(simulation_id: str):
-    """يقرأ عدد متابعي صفحة فيسبوك من رابطها (SerpApi). لا يُحفظ تلقائيًا."""
+    """يقرأ صفحة على أي منصّة: الرقم (حيث يتاح) والمنشورات المنشورة فعلًا.
+
+    رابط الصفحة ليس زينة في التقرير: نفتح الحساب ونبحث داخله عن الموضوع
+    المطروح، ونحفظ ما نجده مع المحاكاة ليبدأ منه الوكلاء ويستشهد به التقرير.
+    """
+    import json
+
     from ..services import serp_lookup
+    from ..models import storage as _storage
 
     payload = request.get_json(silent=True) or {}
-    platform = str(payload.get('platform') or 'facebook').strip().lower()
     reference = str(payload.get('url') or payload.get('reference') or '').strip()
-    if platform != 'facebook':
+    platform = str(payload.get('platform') or '').strip().lower()
+    if platform in ('', 'auto'):
+        platform = serp_lookup.detect_platform(reference)
+    if platform == 'x':
+        platform = 'twitter'
+    if not reference:
         return jsonify({
             "success": False,
-            "error": "القراءة من الرابط متاحة لفيسبوك فقط حاليًا",
+            "error": "الصق رابط الحساب أولًا (فيسبوك أو تيك توك أو إكس)",
+        }), 400
+    if platform not in ('facebook', 'tiktok', 'twitter'):
+        return jsonify({
+            "success": False,
+            "error": "تعذّر تحديد المنصّة من الرابط. الصق رابطًا كاملًا يبدأ بـ "
+                     "facebook.com أو tiktok.com أو x.com",
         }), 400
     if not serp_lookup.is_configured():
         return jsonify({
             "success": False,
             "error": "خدمة قراءة الروابط غير مفعّلة (SERPAPI_KEY غير مضبوط)",
         }), 503
+
+    # الموضوع المطروح: نبحث به داخل الحساب بدل قراءة أي منشور قديم
+    topic = str(payload.get('topic') or '').strip()
+    if not topic:
+        try:
+            config = _storage.read_json(f"simulations/{simulation_id}/simulation_config.json") or {}
+            topic = str(config.get('simulation_requirement') or '')
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"تعذر قراءة موضوع المحاكاة: {exc}")
+            topic = ''
+
+    info = {}
+    if platform == 'facebook':
+        try:
+            info = serp_lookup.facebook_profile(reference)
+        except ValueError as exc:
+            return jsonify({"success": False, "error": str(exc)}), 400
+        except Exception as exc:  # noqa: BLE001
+            # الرقم قد يفشل والصفحة تُقرأ: لا نُسقط القراءة كلها
+            logger.warning(f"تعذر قراءة رقم صفحة فيسبوك: {exc}")
+
+    posts = []
     try:
-        info = serp_lookup.facebook_profile(reference)
+        posts = serp_lookup.page_posts(platform, reference, limit=8, topic=topic)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001
-        logger.error(f"تعذر قراءة صفحة فيسبوك: {exc}")
-        return jsonify({
-            "success": False,
-            "error": f"تعذر قراءة الصفحة ({str(exc)[:140]})",
-        }), 502
+        logger.error(f"تعذر قراءة منشورات الحساب: {exc}")
+
+    # ما يقوله الآخرون عن الحساب أو عن موضوعه: آراء المتابعين ومن ينقل عنه.
+    # الصورة لا تكتمل بمنشورات صاحب المشروع وحدها.
+    mentions = []
+    try:
+        mentions = serp_lookup.page_mentions(
+            platform, reference, limit=6, topic=topic, name=str(info.get("name") or "")
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"تعذر قراءة ما يقوله الناس عن الحساب: {exc}")
+
+    # تُحفظ مع المحاكاة: تبدأ منها الجولات، ويستشهد التقرير بروابطها
+    saved = 0
+    if posts or mentions:
+        try:
+            path = f"simulations/{simulation_id}/platform_posts.json"
+            bundle = _storage.read_json(path) or {}
+            if not isinstance(bundle, dict):
+                bundle = {}
+            previous = bundle.get(platform) if isinstance(bundle.get(platform), dict) else {}
+            bundle[platform] = {
+                'url': reference,
+                'topic': topic,
+                'posts': posts or previous.get('posts') or [],
+                'mentions': mentions or previous.get('mentions') or [],
+            }
+            _storage.write_text(path, json.dumps(bundle, ensure_ascii=False, indent=2))
+            saved = len(posts)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"تعذر حفظ منشورات الحساب: {exc}")
+
+    label = {'facebook': 'فيسبوك', 'tiktok': 'تيك توك', 'twitter': 'إكس'}[platform]
+    about = f" حول «{topic[:60]}»" if topic else ""
+    if saved or mentions:
+        note = f"قرأنا {saved} منشورًا حقيقيًا من {label}{about}"
+        if mentions:
+            note += f"، و{len(mentions)} منشورًا للآخرين عنك أو عن موضوعك"
+        note += " — ستبدأ منها المحاكاة ويستشهد التقرير بروابطها."
+        if info.get('followers'):
+            note = f"{info.get('followers_text') or info['followers']} متابع تقريبًا، و" + note
+    else:
+        note = (f"لم نجد منشورات عامة مفهرسة لهذا الحساب على {label}{about}"
+                " — جرّب رابطًا آخر أو اترك المحاكاة تعمل بلا منشورات حقيقية.")
+
     return jsonify({
         "success": True,
         "data": {
-            "platform": "facebook",
-            "followers": info["followers"],
-            "followers_text": info["followers_text"],
+            "platform": platform,
+            "followers": info.get("followers"),
+            "followers_text": info.get("followers_text") or "",
             "approx": True,
-            "name": info["name"],
-            "url": info["url"],
-            "category": info["category"],
-            "phone": info["phone"],
-            "note": "قرأنا الرقم من فيسبوك؛ يعرضه فيسبوك مختصرًا فهو تقريبي ويمكنك تعديله.",
+            "name": info.get("name") or "",
+            "url": info.get("url") or reference,
+            "category": info.get("category") or "",
+            "phone": info.get("phone") or "",
+            "topic": topic,
+            "posts_count": len(posts),
+            "posts": posts[:5],
+            "mentions_count": len(mentions),
+            "mentions": mentions[:5],
+            "note": note,
         },
     })
-
 
 @simulation_bp.route('/<simulation_id>/platform-inputs/trends', methods=['POST'])
 def fetch_search_interest(simulation_id: str):
